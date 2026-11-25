@@ -21,6 +21,10 @@ export type SemanticRole =
   | "metric"
   | "general";
 
+export type CurrencyCode = "USD" | "INR" | "EUR" | "GBP" | "JPY";
+export type CurrencyPreference = CurrencyCode | "AUTO";
+export type DateFormatPreference = "auto" | "MDY" | "DMY";
+
 export interface ColumnProfile {
   /** Unique internal key (safe for duplicate header names) */
   key: string;
@@ -32,16 +36,22 @@ export interface ColumnProfile {
   type: ColumnDataType;
   /** Semantic hint inferred deterministically from header & values */
   role: SemanticRole;
+  /** Detected currency code if type === 'currency' */
+  currencyCode?: CurrencyCode;
   /** Total non-empty cells */
   nonNullCount: number;
   /** Total empty/blank cells */
   missingCount: number;
   /** Count of distinct non-empty values */
   uniqueCount: number;
-  /** Sample distinct values (for quick inspection & filters) */
+  /** Complete distinct values (capped at 5000 for memory safety) */
+  uniqueValues: string[];
+  /** Sample distinct values (first 12, for quick preview) */
   sampleValues: string[];
   /** Numeric statistics if applicable */
   numericStats?: {
+    validCount: number;
+    missingCount: number;
     sum: number;
     avg: number;
     min: number;
@@ -52,6 +62,7 @@ export interface ColumnProfile {
   dateStats?: {
     minIso: string;
     maxIso: string;
+    hasAmbiguousDates?: boolean;
   };
   /** Whether mixed types were detected in this column */
   hasMixedTypes: boolean;
@@ -88,6 +99,7 @@ export interface SummaryCardConfig {
   columnKey?: string;
   aggregation: SummaryCardAggregation;
   format: SummaryCardFormat;
+  currencyCode?: CurrencyCode;
   accent: "indigo" | "blue" | "violet" | "emerald" | "amber";
 }
 
@@ -108,9 +120,17 @@ export interface ChartConfig {
 
 export type DashboardSectionId = "summary" | "charts" | "table";
 
+export interface ColumnTableFilter {
+  mode: "contains" | "range" | "blank_only" | "non_blank";
+  text?: string;
+  min?: string;
+  max?: string;
+}
+
 export interface DashboardFilterState {
   search: string;
   columnFilters: Record<string, string[]>;
+  tableColumnFilters?: Record<string, ColumnTableFilter>;
   dateRange?: {
     columnKey: string;
     from?: string;
@@ -124,6 +144,8 @@ export interface DashboardConfig {
   sectionOrder: DashboardSectionId[];
   summaryCards: SummaryCardConfig[];
   charts: ChartConfig[];
+  currencyOverride?: CurrencyPreference;
+  dateFormatPreference?: DateFormatPreference;
   defaultSort?: {
     columnKey: string;
     desc: boolean;

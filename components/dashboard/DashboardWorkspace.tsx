@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   FileSpreadsheet,
   Upload,
@@ -17,31 +17,38 @@ import {
 } from "lucide-react";
 import {
   applyDashboardFilters,
+  ensureTableSection,
   generateDashboardConfig,
 } from "@/lib/analytics/engine";
 import { SummaryCards } from "@/components/dashboard/SummaryCards";
 import { DashboardCharts } from "@/components/charts/DashboardCharts";
 import { DataTable } from "@/components/data-table/DataTable";
 import { ExportMenu } from "@/components/export/ExportMenu";
+import { CategoryFilterPopover } from "@/components/dashboard/CategoryFilterPopover";
 import { cn } from "@/lib/utils";
 import type {
   ChartConfig,
+  ColumnTableFilter,
+  CurrencyPreference,
   DashboardConfig,
   DashboardFilterState,
   DashboardSectionId,
+  DateFormatPreference,
   ParsedWorkbook,
 } from "@/types/dashboard";
 
 interface DashboardWorkspaceProps {
   workbook: ParsedWorkbook;
+  initialConfig?: DashboardConfig;
   originalFile: File | null;
+  onConfigChange?: (config: DashboardConfig) => void;
   onReset: () => void;
 }
 
 const SECTION_LABELS: Record<DashboardSectionId, string> = {
   summary: "Summary Cards",
   charts: "Visualizations",
-  table: "Data Explorer Table",
+  table: "Data Explorer Table (Mandatory)",
 };
 
 const TYPE_BADGE_COLORS: Record<string, string> = {
@@ -58,16 +65,24 @@ const TYPE_BADGE_COLORS: Record<string, string> = {
 
 export function DashboardWorkspace({
   workbook,
+  initialConfig,
   originalFile,
+  onConfigChange,
   onReset,
 }: DashboardWorkspaceProps) {
-  const initialSheet = workbook.sheets[workbook.sheetNames[0]];
-  const [config, setConfig] = useState<DashboardConfig>(() =>
-    generateDashboardConfig(initialSheet, workbook.fileName)
-  );
+  const firstSheet = workbook.sheets[workbook.sheetNames[0]];
+  const [config, setConfig] = useState<DashboardConfig>(() => {
+    const base = initialConfig ?? generateDashboardConfig(firstSheet, workbook.fileName);
+    return {
+      ...base,
+      sectionOrder: ensureTableSection(base.sectionOrder),
+    };
+  });
+
   const [filters, setFilters] = useState<DashboardFilterState>({
     search: "",
     columnFilters: {},
+    tableColumnFilters: {},
   });
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -75,31 +90,40 @@ export function DashboardWorkspace({
   const [showSchema, setShowSchema] = useState(false);
   const [showCustomize, setShowCustomize] = useState(false);
 
-  const activeSheet = workbook.sheets[config.activeSheetName] ?? initialSheet;
+  useEffect(() => {
+    onConfigChange?.(config);
+  }, [config, onConfigChange]);
+
+  const activeSheet = workbook.sheets[config.activeSheetName] ?? firstSheet;
 
   const handleSheetChange = (sheetName: string) => {
     const nextSheet = workbook.sheets[sheetName];
     if (!nextSheet) return;
     setConfig(generateDashboardConfig(nextSheet, workbook.fileName));
-    setFilters({ search: "", columnFilters: {} });
+    setFilters({ search: "", columnFilters: {}, tableColumnFilters: {} });
   };
 
   const filteredRows = useMemo(
-    () => applyDashboardFilters(activeSheet, filters),
-    [activeSheet, filters]
+    () =>
+      applyDashboardFilters(
+        activeSheet,
+        filters,
+        config.dateFormatPreference ?? "auto"
+      ),
+    [activeSheet, filters, config.dateFormatPreference]
   );
 
-  // Surface up to 3 filterable categorical/status columns + 1 date column
+  // Surface up to 4 filterable categorical/status columns
   const filterableColumns = useMemo(
     () =>
       activeSheet.columns
         .filter(
           (c) =>
             (c.type === "category" || c.type === "status" || c.role === "location") &&
-            c.uniqueCount >= 2 &&
-            c.uniqueCount <= 30
+            c.uniqueCount >= 1 &&
+            c.uniqueCount <= 200
         )
-        .slice(0, 3),
+        .slice(0, 4),
     [activeSheet.columns]
   );
 
@@ -108,15 +132,36 @@ export function DashboardWorkspace({
     [activeSheet.columns]
   );
 
+  const hasAmbiguousDates = useMemo(
+    () => activeSheet.columns.some((c) => c.dateStats?.hasAmbiguousDates),
+    [activeSheet.columns]
+  );
+
   const hasActiveFilters = Boolean(
     filters.search.trim() ||
       Object.values(filters.columnFilters).some((v) => v.length > 0) ||
+      Object.keys(filters.tableColumnFilters ?? {}).length > 0 ||
       filters.dateRange?.from ||
       filters.dateRange?.to
   );
 
   const clearAllFilters = () => {
-    setFilters({ search: "", columnFilters: {} });
+    setFilters({ search: "", columnFilters: {}, tableColumnFilters: {} });
+  };
+
+  const handleTableColumnFilterChange = (
+    colKey: string,
+    filter: ColumnTableFilter | null
+  ) => {
+    setFilters((prev) => {
+      const next = { ...(prev.tableColumnFilters ?? {}) };
+      if (!filter) {
+        delete next[colKey];
+      } else {
+        next[colKey] = filter;
+      }
+      return { ...prev, tableColumnFilters: next };
+    });
   };
 
   const moveSection = (index: number, direction: -1 | 1) => {
@@ -126,7 +171,7 @@ export function DashboardWorkspace({
       const nextOrder = [...prev.sectionOrder];
       const [item] = nextOrder.splice(index, 1);
       nextOrder.splice(target, 0, item);
-      return { ...prev, sectionOrder: nextOrder };
+      return { ...prev, sectionOrder: ensureTableSection(nextOrder) };
     });
   };
 
@@ -159,6 +204,8 @@ export function DashboardWorkspace({
       charts: [...prev.charts, chart],
     }));
   };
+
+  const orderedSections = ensureTableSection(config.sectionOrder);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -235,6 +282,7 @@ export function DashboardWorkspace({
               <div className="flex items-center gap-1.5 bg-slate-100 rounded-xl px-2.5 py-1.5 text-xs">
                 <span className="text-slate-500 font-medium">Sheet:</span>
                 <select
+                  aria-label="Select worksheet"
                   value={activeSheet.name}
                   onChange={(e) => handleSheetChange(e.target.value)}
                   className="bg-transparent font-semibold text-slate-800 focus:outline-none cursor-pointer"
@@ -283,6 +331,7 @@ export function DashboardWorkspace({
               filteredRows={filteredRows}
               columns={activeSheet.columns}
               summaryCards={config.summaryCards}
+              currencyOverride={config.currencyOverride ?? "AUTO"}
             />
 
             <button
@@ -299,14 +348,36 @@ export function DashboardWorkspace({
 
       {/* Main Dashboard Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
-        {/* Workbook Warnings */}
-        {workbook.warnings.length > 0 && (
+        {/* Workbook Warnings + Ambiguous Date Notice */}
+        {(workbook.warnings.length > 0 || hasAmbiguousDates) && (
           <div className="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs text-amber-900 flex items-start gap-2.5 no-print">
             <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-            <div className="space-y-0.5">
+            <div className="space-y-1 flex-1">
               {workbook.warnings.map((w, i) => (
                 <p key={i}>{w}</p>
               ))}
+              {hasAmbiguousDates && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>
+                    Ambiguous numeric dates detected (e.g. 01/02/2026). Select date order:
+                  </span>
+                  <select
+                    aria-label="Date format preference"
+                    value={config.dateFormatPreference ?? "auto"}
+                    onChange={(e) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        dateFormatPreference: e.target.value as DateFormatPreference,
+                      }))
+                    }
+                    className="rounded-lg border border-amber-300 bg-white px-2 py-0.5 text-xs font-medium text-amber-950"
+                  >
+                    <option value="auto">Auto (MM/DD/YYYY)</option>
+                    <option value="MDY">MM/DD/YYYY (US)</option>
+                    <option value="DMY">DD/MM/YYYY (International)</option>
+                  </select>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -320,7 +391,7 @@ export function DashboardWorkspace({
                   Detected Column Schema ({activeSheet.columns.length})
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Types and missing values detected deterministically from your worksheet.
+                  Types, currency codes, and missing values detected deterministically.
                 </p>
               </div>
               <button
@@ -348,6 +419,7 @@ export function DashboardWorkspace({
                       )}
                     >
                       {col.type}
+                      {col.currencyCode ? ` (${col.currencyCode})` : ""}
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-slate-500">
@@ -360,14 +432,17 @@ export function DashboardWorkspace({
           </section>
         )}
 
-        {/* Layout Customization Panel */}
+        {/* Layout & Display Customization Panel */}
         {showCustomize && (
           <section className="rounded-2xl border border-indigo-200 bg-white p-5 shadow-xs space-y-4 no-print">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-slate-900">Dashboard Layout & Defaults</h2>
+                <h2 className="text-sm font-semibold text-slate-900">
+                  Dashboard Layout & Display Preferences
+                </h2>
                 <p className="text-xs text-slate-500">
-                  Reorder dashboard sections or reset to the auto-generated layout.
+                  Reorder sections, set display currency, or reset to the default layout. The Data
+                  Explorer table is always preserved.
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -375,7 +450,7 @@ export function DashboardWorkspace({
                   type="button"
                   onClick={() => {
                     setConfig(generateDashboardConfig(activeSheet, workbook.fileName));
-                    setFilters({ search: "", columnFilters: {} });
+                    setFilters({ search: "", columnFilters: {}, tableColumnFilters: {} });
                   }}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50"
                 >
@@ -392,11 +467,11 @@ export function DashboardWorkspace({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <span className="text-xs font-medium text-slate-600">Section Order</span>
                 <div className="space-y-1.5">
-                  {config.sectionOrder.map((secId, idx) => (
+                  {orderedSections.map((secId, idx) => (
                     <div
                       key={secId}
                       className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs"
@@ -414,7 +489,7 @@ export function DashboardWorkspace({
                         </button>
                         <button
                           type="button"
-                          disabled={idx === config.sectionOrder.length - 1}
+                          disabled={idx === orderedSections.length - 1}
                           onClick={() => moveSection(idx, 1)}
                           className="p-1 rounded hover:bg-white disabled:opacity-30"
                           aria-label={`Move ${SECTION_LABELS[secId]} down`}
@@ -473,6 +548,28 @@ export function DashboardWorkspace({
                   )}
                 </div>
               </div>
+
+              <div className="space-y-2">
+                <span className="text-xs font-medium text-slate-600">Display Currency</span>
+                <select
+                  aria-label="Display Currency"
+                  value={config.currencyOverride ?? "AUTO"}
+                  onChange={(e) =>
+                    setConfig((prev) => ({
+                      ...prev,
+                      currencyOverride: e.target.value as CurrencyPreference,
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-indigo-400"
+                >
+                  <option value="AUTO">Auto-detect from spreadsheet</option>
+                  <option value="USD">USD ($)</option>
+                  <option value="INR">INR (₹)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="GBP">GBP (£)</option>
+                  <option value="JPY">JPY (¥)</option>
+                </select>
+              </div>
             </div>
           </section>
         )}
@@ -485,40 +582,22 @@ export function DashboardWorkspace({
               Filters:
             </div>
 
-            {filterableColumns.map((col) => {
-              const selected = filters.columnFilters[col.key] ?? [];
-              return (
-                <div key={col.key} className="relative group">
-                  <select
-                    aria-label={`Filter by ${col.label}`}
-                    value={selected[0] ?? ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setFilters((prev) => ({
-                        ...prev,
-                        columnFilters: {
-                          ...prev.columnFilters,
-                          [col.key]: val ? [val] : [],
-                        },
-                      }));
-                    }}
-                    className={cn(
-                      "rounded-xl border px-3 py-1.5 text-xs font-medium focus:outline-none cursor-pointer transition-colors",
-                      selected.length > 0
-                        ? "border-indigo-300 bg-indigo-50 text-indigo-700"
-                        : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-white"
-                    )}
-                  >
-                    <option value="">All {col.label}</option>
-                    {col.sampleValues.map((val) => (
-                      <option key={val} value={val}>
-                        {val}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              );
-            })}
+            {filterableColumns.map((col) => (
+              <CategoryFilterPopover
+                key={col.key}
+                column={col}
+                selectedValues={filters.columnFilters[col.key] ?? []}
+                onChange={(nextValues) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    columnFilters: {
+                      ...prev.columnFilters,
+                      [col.key]: nextValues,
+                    },
+                  }))
+                }
+              />
+            ))}
 
             {primaryDateCol && (
               <div className="flex items-center gap-1.5 text-xs">
@@ -572,8 +651,8 @@ export function DashboardWorkspace({
           </section>
         )}
 
-        {/* Ordered Dashboard Sections */}
-        {config.sectionOrder.map((sectionId) => {
+        {/* Ordered Dashboard Sections (Data Table is mandatory) */}
+        {orderedSections.map((sectionId) => {
           if (sectionId === "summary") {
             return (
               <section key="summary">
@@ -581,6 +660,7 @@ export function DashboardWorkspace({
                   cards={config.summaryCards}
                   filteredRows={filteredRows}
                   totalRows={activeSheet.rowCount}
+                  currencyOverride={config.currencyOverride ?? "AUTO"}
                   onRenameCard={handleRenameCard}
                 />
               </section>
@@ -594,6 +674,8 @@ export function DashboardWorkspace({
                   charts={config.charts}
                   columns={activeSheet.columns}
                   filteredRows={filteredRows}
+                  currencyOverride={config.currencyOverride ?? "AUTO"}
+                  dateFormatPreference={config.dateFormatPreference ?? "auto"}
                   onUpdateChart={handleUpdateChart}
                   onRemoveChart={handleRemoveChart}
                   onAddChart={handleAddChart}
@@ -611,6 +693,9 @@ export function DashboardWorkspace({
                 totalRows={activeSheet.rowCount}
                 searchQuery={filters.search}
                 onSearchChange={(q) => setFilters((prev) => ({ ...prev, search: q }))}
+                tableColumnFilters={filters.tableColumnFilters ?? {}}
+                onTableColumnFilterChange={handleTableColumnFilterChange}
+                currencyOverride={config.currencyOverride ?? "AUTO"}
                 defaultSort={config.defaultSort}
                 onClearAllFilters={clearAllFilters}
                 hasActiveFilters={hasActiveFilters}

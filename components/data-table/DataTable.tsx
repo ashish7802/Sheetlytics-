@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -8,6 +8,7 @@ import {
   getPaginationRowModel,
   flexRender,
   type ColumnDef,
+  type PaginationState,
   type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table";
@@ -19,11 +20,17 @@ import {
   ChevronLeft,
   ChevronRight,
   Search,
+  SlidersHorizontal,
   X,
 } from "lucide-react";
 import { cn, formatCurrency, formatNumber } from "@/lib/utils";
 import { tryParseNumber } from "@/lib/excel/profiler";
-import type { ColumnProfile, DataRow } from "@/types/dashboard";
+import type {
+  ColumnProfile,
+  ColumnTableFilter,
+  CurrencyPreference,
+  DataRow,
+} from "@/types/dashboard";
 
 interface DataTableProps {
   columns: ColumnProfile[];
@@ -31,6 +38,9 @@ interface DataTableProps {
   totalRows: number;
   searchQuery: string;
   onSearchChange: (q: string) => void;
+  tableColumnFilters: Record<string, ColumnTableFilter>;
+  onTableColumnFilterChange: (colKey: string, filter: ColumnTableFilter | null) => void;
+  currencyOverride?: CurrencyPreference;
   defaultSort?: { columnKey: string; desc: boolean };
   onClearAllFilters: () => void;
   hasActiveFilters: boolean;
@@ -40,6 +50,7 @@ const STATUS_BADGE_COLORS: Record<string, string> = {
   won: "bg-emerald-50 text-emerald-700 border-emerald-200",
   paid: "bg-emerald-50 text-emerald-700 border-emerald-200",
   "in stock": "bg-emerald-50 text-emerald-700 border-emerald-200",
+  pass: "bg-emerald-50 text-emerald-700 border-emerald-200",
   qualified: "bg-indigo-50 text-indigo-700 border-indigo-200",
   "proposal sent": "bg-blue-50 text-blue-700 border-blue-200",
   pending: "bg-amber-50 text-amber-700 border-amber-200",
@@ -47,6 +58,7 @@ const STATUS_BADGE_COLORS: Record<string, string> = {
   contacted: "bg-violet-50 text-violet-700 border-violet-200",
   new: "bg-sky-50 text-sky-700 border-sky-200",
   lost: "bg-rose-50 text-rose-700 border-rose-200",
+  fail: "bg-rose-50 text-rose-700 border-rose-200",
   overdue: "bg-rose-50 text-rose-700 border-rose-200",
   "out of stock": "bg-rose-50 text-rose-700 border-rose-200",
 };
@@ -57,6 +69,9 @@ export function DataTable({
   totalRows,
   searchQuery,
   onSearchChange,
+  tableColumnFilters,
+  onTableColumnFilterChange,
+  currencyOverride = "AUTO",
   defaultSort,
   onClearAllFilters,
   hasActiveFilters,
@@ -66,6 +81,16 @@ export function DataTable({
   );
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [isColMenuOpen, setIsColMenuOpen] = useState(false);
+  const [showColumnFilterRow, setShowColumnFilterRow] = useState(false);
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 15,
+  });
+
+  // Reset pagination to page 0 whenever filtered rows or search change
+  useEffect(() => {
+    setPagination((prev) => (prev.pageIndex === 0 ? prev : { ...prev, pageIndex: 0 }));
+  }, [rows.length, searchQuery]);
 
   const tableColumns = useMemo<ColumnDef<DataRow>[]>(
     () =>
@@ -97,7 +122,13 @@ export function DataTable({
           if (col.type === "currency") {
             const num = tryParseNumber(val as string | number);
             if (num !== null) {
-              return <span className="font-mono text-xs text-slate-800">{formatCurrency(num)}</span>;
+              const code =
+                currencyOverride !== "AUTO" ? currencyOverride : (col.currencyCode ?? "USD");
+              return (
+                <span className="font-mono text-xs text-slate-800">
+                  {formatCurrency(num, false, code)}
+                </span>
+              );
             }
           }
 
@@ -136,7 +167,7 @@ export function DataTable({
           return <span className="text-xs text-slate-700">{String(val)}</span>;
         },
       })),
-    [columns]
+    [columns, currencyOverride]
   );
 
   const table = useReactTable({
@@ -145,36 +176,33 @@ export function DataTable({
     state: {
       sorting,
       columnVisibility,
+      pagination,
     },
     onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,
+    onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     columnResizeMode: "onChange",
-    initialState: {
-      pagination: {
-        pageSize: 15,
-      },
-    },
   });
 
-  const pageIndex = table.getState().pagination.pageIndex;
-  const pageSize = table.getState().pagination.pageSize;
+  const activeTableFilterCount = Object.keys(tableColumnFilters).length;
 
   return (
-    <div className="rounded-2xl border border-slate-200/90 bg-white shadow-xs overflow-hidden">
+    <div
+      data-testid="mandatory-data-table"
+      className="rounded-2xl border border-slate-200/90 bg-white shadow-xs overflow-hidden"
+    >
       {/* Table Toolbar */}
       <div className="p-4 sm:p-5 border-b border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold text-slate-900">Data Explorer</h2>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-500" data-testid="table-row-count">
             Showing{" "}
             <span className="font-semibold text-slate-700">{rows.length.toLocaleString()}</span>{" "}
-            {rows.length !== totalRows && (
-              <>of {totalRows.toLocaleString()} total </>
-            )}
-            records
+            {rows.length !== totalRows && <>of {totalRows.toLocaleString()} total </>}
+            records • {columns.length} columns
           </p>
         </div>
 
@@ -187,6 +215,7 @@ export function DataTable({
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder="Search all columns..."
+              aria-label="Search all columns"
               className="w-full rounded-xl border border-slate-200 bg-slate-50/70 pl-8 pr-8 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:border-indigo-400"
             />
             {searchQuery && (
@@ -200,6 +229,25 @@ export function DataTable({
               </button>
             )}
           </div>
+
+          <button
+            type="button"
+            onClick={() => setShowColumnFilterRow((prev) => !prev)}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors",
+              showColumnFilterRow || activeTableFilterCount > 0
+                ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+            )}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Column Filters
+            {activeTableFilterCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-indigo-600 text-white text-[10px]">
+                {activeTableFilterCount}
+              </span>
+            )}
+          </button>
 
           {hasActiveFilters && (
             <button
@@ -223,25 +271,28 @@ export function DataTable({
             </button>
 
             {isColMenuOpen && (
-              <div className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white shadow-lg p-2 z-30 max-h-72 overflow-y-auto">
-                <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  Toggle Columns
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setIsColMenuOpen(false)} />
+                <div className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white shadow-lg p-2 z-30 max-h-72 overflow-y-auto">
+                  <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                    Toggle Columns
+                  </div>
+                  {table.getAllLeafColumns().map((column) => (
+                    <label
+                      key={column.id}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer text-xs text-slate-700"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={column.getIsVisible()}
+                        onChange={column.getToggleVisibilityHandler()}
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="truncate">{String(column.columnDef.header)}</span>
+                    </label>
+                  ))}
                 </div>
-                {table.getAllLeafColumns().map((column) => (
-                  <label
-                    key={column.id}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer text-xs text-slate-700"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={column.getIsVisible()}
-                      onChange={column.getToggleVisibilityHandler()}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <span className="truncate">{String(column.columnDef.header)}</span>
-                  </label>
-                ))}
-              </div>
+              </>
             )}
           </div>
         </div>
@@ -295,6 +346,112 @@ export function DataTable({
                 })}
               </tr>
             ))}
+
+            {/* Per-Column Filter Row */}
+            {showColumnFilterRow && (
+              <tr className="bg-white border-t border-slate-200 no-print">
+                {table.getVisibleLeafColumns().map((col) => {
+                  const profile = columns.find((c) => c.key === col.id);
+                  const current = tableColumnFilters[col.id];
+                  const isNumeric =
+                    profile?.type === "number" ||
+                    profile?.type === "currency" ||
+                    profile?.type === "percentage";
+
+                  return (
+                    <th key={`filter-${col.id}`} className="px-2 py-2 font-normal">
+                      <div className="flex flex-col gap-1">
+                        {isNumeric ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              placeholder="Min"
+                              aria-label={`Min ${profile?.label}`}
+                              value={current?.mode === "range" ? (current.min ?? "") : ""}
+                              onChange={(e) => {
+                                const min = e.target.value;
+                                const max = current?.mode === "range" ? current.max : undefined;
+                                if (!min && !max) {
+                                  onTableColumnFilterChange(col.id, null);
+                                } else {
+                                  onTableColumnFilterChange(col.id, {
+                                    mode: "range",
+                                    min,
+                                    max,
+                                  });
+                                }
+                              }}
+                              className="w-16 rounded border border-slate-200 px-1.5 py-1 text-[11px] text-slate-700 focus:outline-none focus:border-indigo-400"
+                            />
+                            <input
+                              type="number"
+                              placeholder="Max"
+                              aria-label={`Max ${profile?.label}`}
+                              value={current?.mode === "range" ? (current.max ?? "") : ""}
+                              onChange={(e) => {
+                                const max = e.target.value;
+                                const min = current?.mode === "range" ? current.min : undefined;
+                                if (!min && !max) {
+                                  onTableColumnFilterChange(col.id, null);
+                                } else {
+                                  onTableColumnFilterChange(col.id, {
+                                    mode: "range",
+                                    min,
+                                    max,
+                                  });
+                                }
+                              }}
+                              className="w-16 rounded border border-slate-200 px-1.5 py-1 text-[11px] text-slate-700 focus:outline-none focus:border-indigo-400"
+                            />
+                          </div>
+                        ) : (
+                          <input
+                            type="text"
+                            placeholder="Filter..."
+                            aria-label={`Filter ${profile?.label ?? col.id}`}
+                            value={current?.mode === "contains" ? (current.text ?? "") : ""}
+                            onChange={(e) => {
+                              const text = e.target.value;
+                              if (!text) {
+                                onTableColumnFilterChange(col.id, null);
+                              } else {
+                                onTableColumnFilterChange(col.id, {
+                                  mode: "contains",
+                                  text,
+                                });
+                              }
+                            }}
+                            className="w-full min-w-[90px] rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-700 focus:outline-none focus:border-indigo-400"
+                          />
+                        )}
+
+                        <select
+                          aria-label={`Blank filter for ${profile?.label ?? col.id}`}
+                          value={
+                            current?.mode === "blank_only" || current?.mode === "non_blank"
+                              ? current.mode
+                              : ""
+                          }
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === "blank_only" || val === "non_blank") {
+                              onTableColumnFilterChange(col.id, { mode: val });
+                            } else {
+                              onTableColumnFilterChange(col.id, null);
+                            }
+                          }}
+                          className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600 focus:outline-none"
+                        >
+                          <option value="">All values</option>
+                          <option value="blank_only">Blank only</option>
+                          <option value="non_blank">Non-blank only</option>
+                        </select>
+                      </div>
+                    </th>
+                  );
+                })}
+              </tr>
+            )}
           </thead>
 
           <tbody className="divide-y divide-slate-100">
@@ -331,7 +488,7 @@ export function DataTable({
         <div className="flex items-center gap-2">
           <span>Rows per page:</span>
           <select
-            value={pageSize}
+            value={pagination.pageSize}
             onChange={(e) => table.setPageSize(Number(e.target.value))}
             className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:outline-none focus:border-indigo-400"
           >
@@ -345,7 +502,8 @@ export function DataTable({
 
         <div className="flex items-center gap-3">
           <span>
-            Page <span className="font-semibold text-slate-800">{pageIndex + 1}</span> of{" "}
+            Page <span className="font-semibold text-slate-800">{pagination.pageIndex + 1}</span>{" "}
+            of{" "}
             <span className="font-semibold text-slate-800">
               {Math.max(table.getPageCount(), 1)}
             </span>

@@ -3,9 +3,12 @@ import { formatCurrency, formatNumber, formatPercentage } from "../utils.ts";
 import type {
   ChartConfig,
   ColumnProfile,
+  CurrencyPreference,
   DashboardConfig,
   DashboardFilterState,
+  DashboardSectionId,
   DataRow,
+  DateFormatPreference,
   ParsedSheet,
   SummaryCardConfig,
 } from "../../types/dashboard.ts";
@@ -23,6 +26,17 @@ function formatTitleFromFileName(fileName: string): string {
   const cleaned = withoutExt.replace(/[-_]+/g, " ").trim();
   if (!cleaned) return "Spreadsheet Dashboard";
   return cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Guarantees that the mandatory Data Table section is always present in sectionOrder.
+ */
+export function ensureTableSection(order: DashboardSectionId[]): DashboardSectionId[] {
+  const unique = Array.from(new Set(order));
+  if (!unique.includes("table")) {
+    unique.push("table");
+  }
+  return unique;
 }
 
 /**
@@ -64,12 +78,12 @@ export function generateDashboardConfig(
     });
   }
 
-  // 3. Look for email column -> verified/non-empty emails
+  // 3. Look for email column -> populated/present emails (never claim verified without evidence)
   const emailCol = cols.find((c) => c.role === "email" || c.type === "email");
   if (emailCol) {
     summaryCards.push({
       id: `card-emails-${emailCol.key}`,
-      title: `Valid ${emailCol.label}s`,
+      title: `Populated ${emailCol.label}s`,
       subtitle: `${emailCol.missingCount} missing`,
       columnKey: emailCol.key,
       aggregation: "non_empty",
@@ -87,18 +101,24 @@ export function generateDashboardConfig(
     if (summaryCards.length >= 4) break;
     const isPercent = numCol.type === "percentage";
     const isCurrency = numCol.type === "currency";
+    const currCode = numCol.currencyCode ?? "USD";
+    const avgVal = numCol.numericStats?.avg ?? 0;
+
     summaryCards.push({
       id: `card-metric-${numCol.key}`,
       title: isPercent ? `Avg ${numCol.label}` : `Total ${numCol.label}`,
-      subtitle: isPercent ? "Mean across rows" : `Avg ${isCurrency ? formatCurrency(numCol.numericStats?.avg ?? 0) : formatNumber(numCol.numericStats?.avg ?? 0)}`,
+      subtitle: isPercent
+        ? `${numCol.numericStats?.validCount ?? 0} valid values`
+        : `Avg ${isCurrency ? formatCurrency(avgVal, false, currCode) : formatNumber(avgVal)}`,
       columnKey: numCol.key,
       aggregation: isPercent ? "avg" : "sum",
       format: isCurrency ? "currency" : isPercent ? "percentage" : "number",
+      currencyCode: isCurrency ? currCode : undefined,
       accent: ACCENTS[summaryCards.length % ACCENTS.length],
     });
   }
 
-  // Fill up to 4 cards if needed using status or data completeness
+  // Fill up to 4 cards if needed using status
   if (summaryCards.length < 4) {
     const statusCol = cols.find((c) => c.role === "status" || c.type === "status");
     if (statusCol) {
@@ -123,7 +143,7 @@ export function generateDashboardConfig(
     (c) =>
       (c.type === "category" || c.type === "status" || c.role === "location" || c.role === "category") &&
       c.uniqueCount >= 2 &&
-      c.uniqueCount <= 30 &&
+      c.uniqueCount <= 50 &&
       c.role !== "id" &&
       c.role !== "email"
   );
@@ -154,7 +174,7 @@ export function generateDashboardConfig(
     });
   }
 
-  // Rule 2: Status distribution -> Doughnut/Pie Chart
+  // Rule 2: Status distribution -> Doughnut Chart
   const statusCol = categoricalCols.find((c) => c.role === "status" || c.type === "status");
   if (statusCol) {
     charts.push({
@@ -212,7 +232,7 @@ export function generateDashboardConfig(
     });
   }
 
-  // Fallback: if no date or category columns exist, create a binned histogram of primaryMetric
+  // Fallback: if no date or category columns exist, create a chart only if numeric metric exists
   if (charts.length === 0 && primaryMetric) {
     charts.push({
       id: `chart-dist-${primaryMetric.key}`,
@@ -231,23 +251,40 @@ export function generateDashboardConfig(
     sectionOrder: ["summary", "charts", "table"],
     summaryCards,
     charts,
+    currencyOverride: "AUTO",
+    dateFormatPreference: "auto",
   };
 }
 
 /**
- * Filters rows deterministically based on global search, column value filters, and date range.
+ * Filters rows deterministically based on global search, category multi-selects,
+ * per-column table filters, and date range.
  */
 export function applyDashboardFilters(
   sheet: ParsedSheet,
-  filters: DashboardFilterState
+  filters: DashboardFilterState,
+  datePreference: DateFormatPreference = "auto"
 ): DataRow[] {
   const searchLower = filters.search.trim().toLowerCase();
   const activeColFilters = Object.entries(filters.columnFilters).filter(
     ([, values]) => values.length > 0
   );
+  const activeTableFilters = Object.entries(filters.tableColumnFilters ?? {}).filter(
+    ([, f]) =>
+      f.mode === "blank_only" ||
+      f.mode === "non_blank" ||
+      (f.mode === "contains" && Boolean(f.text?.trim())) ||
+      (f.mode === "range" && (Boolean(f.min?.trim()) || Boolean(f.max?.trim())))
+  );
   const dateRange = filters.dateRange;
 
-  if (!searchLower && activeColFilters.length === 0 && !dateRange?.from && !dateRange?.to) {
+  if (
+    !searchLower &&
+    activeColFilters.length === 0 &&
+    activeTableFilters.length === 0 &&
+    !dateRange?.from &&
+    !dateRange?.to
+  ) {
     return sheet.rows;
   }
 
@@ -265,18 +302,46 @@ export function applyDashboardFilters(
       if (!matched) return false;
     }
 
-    // 2. Column-specific multi-select filters
+    // 2. Column-specific multi-select filters (including "(Blank)")
     for (const [colKey, allowedValues] of activeColFilters) {
       const val = row[colKey];
-      const strVal = val === null || val === undefined ? "(Blank)" : String(val);
+      const strVal =
+        val === null || val === undefined || String(val).trim() === ""
+          ? "(Blank)"
+          : String(val).trim();
       if (!allowedValues.includes(strVal)) {
         return false;
       }
     }
 
-    // 3. Date range filter
+    // 3. Per-column table filters (text contains, numeric range, blank/non-blank)
+    for (const [colKey, tf] of activeTableFilters) {
+      const val = row[colKey];
+      const isBlank = val === null || val === undefined || String(val).trim() === "";
+
+      if (tf.mode === "blank_only") {
+        if (!isBlank) return false;
+      } else if (tf.mode === "non_blank") {
+        if (isBlank) return false;
+      } else if (tf.mode === "contains" && tf.text?.trim()) {
+        if (isBlank || !String(val).toLowerCase().includes(tf.text.trim().toLowerCase())) {
+          return false;
+        }
+      } else if (tf.mode === "range") {
+        const num = tryParseNumber(val);
+        if (num === null) return false;
+        if (tf.min?.trim() && num < Number(tf.min)) return false;
+        if (tf.max?.trim() && num > Number(tf.max)) return false;
+      }
+    }
+
+    // 4. Date range filter
     if (dateRange && (dateRange.from || dateRange.to)) {
-      const iso = tryParseDateIso(row[dateRange.columnKey]);
+      const col = sheet.columns.find((c) => c.key === dateRange.columnKey);
+      const allowSerial = col
+        ? /\b(date|created|updated|joined|dob|timestamp)\b/.test(col.label.toLowerCase())
+        : false;
+      const iso = tryParseDateIso(row[dateRange.columnKey], datePreference, allowSerial);
       if (!iso) return false;
       if (dateRange.from && iso < dateRange.from) return false;
       if (dateRange.to && iso > dateRange.to) return false;
@@ -286,11 +351,21 @@ export function applyDashboardFilters(
   });
 }
 
+export interface SummaryCardResult {
+  value: number;
+  formatted: string;
+  validCount: number;
+  missingCount: number;
+}
+
 export function computeSummaryCardValue(
   rows: DataRow[],
-  card: SummaryCardConfig
-): { value: number; formatted: string } {
+  card: SummaryCardConfig,
+  currencyOverride: CurrencyPreference = "AUTO"
+): SummaryCardResult {
   let value = 0;
+  let validCount = rows.length;
+  let missingCount = 0;
 
   if (card.aggregation === "count") {
     value = rows.length;
@@ -298,13 +373,17 @@ export function computeSummaryCardValue(
     const key = card.columnKey;
     if (card.aggregation === "unique") {
       const set = new Set<string>();
+      let nonEmpty = 0;
       for (const r of rows) {
         const v = r[key];
         if (v !== null && v !== undefined && String(v).trim() !== "") {
+          nonEmpty++;
           set.add(String(v).trim());
         }
       }
       value = set.size;
+      validCount = nonEmpty;
+      missingCount = rows.length - nonEmpty;
     } else if (card.aggregation === "non_empty") {
       let count = 0;
       for (const r of rows) {
@@ -314,12 +393,16 @@ export function computeSummaryCardValue(
         }
       }
       value = count;
+      validCount = count;
+      missingCount = rows.length - count;
     } else {
       const nums: number[] = [];
       for (const r of rows) {
         const n = tryParseNumber(r[key]);
         if (n !== null) nums.push(n);
       }
+      validCount = nums.length;
+      missingCount = rows.length - nums.length;
       if (nums.length > 0) {
         if (card.aggregation === "sum") {
           value = nums.reduce((a, b) => a + b, 0);
@@ -336,31 +419,40 @@ export function computeSummaryCardValue(
 
   let formatted = formatNumber(value, { compact: value >= 100000 });
   if (card.format === "currency") {
-    formatted = formatCurrency(value, value >= 100000);
+    const code = currencyOverride !== "AUTO" ? currencyOverride : (card.currencyCode ?? "USD");
+    formatted = formatCurrency(value, value >= 100000, code);
   } else if (card.format === "percentage") {
     formatted = formatPercentage(value);
   }
 
-  return { value, formatted };
+  return { value, formatted, validCount, missingCount };
 }
 
 export interface ChartDataPoint {
   name: string;
   value: number;
   count: number;
+  validNumericCount: number;
 }
 
 export function computeChartData(
   rows: DataRow[],
   chart: ChartConfig,
-  columns: ColumnProfile[]
+  columns: ColumnProfile[],
+  datePreference: DateFormatPreference = "auto"
 ): ChartDataPoint[] {
   const xCol = columns.find((c) => c.key === chart.xColumnKey);
   if (!xCol) return [];
 
-  const buckets = new Map<string, { sum: number; count: number }>();
+  const buckets = new Map<
+    string,
+    { sum: number; count: number; validNumericCount: number }
+  >();
 
   const isDateAxis = xCol.type === "date";
+  const allowSerial = /\b(date|created|updated|joined|dob|timestamp)\b/.test(
+    xCol.label.toLowerCase()
+  );
   const granularity = chart.dateGranularity ?? "month";
 
   for (const row of rows) {
@@ -369,7 +461,7 @@ export function computeChartData(
 
     if (rawX !== null && rawX !== undefined && String(rawX).trim() !== "") {
       if (isDateAxis) {
-        const iso = tryParseDateIso(rawX);
+        const iso = tryParseDateIso(rawX, datePreference, allowSerial);
         if (!iso) continue;
         if (granularity === "year") {
           bucketKey = iso.slice(0, 4);
@@ -383,13 +475,18 @@ export function computeChartData(
       }
     }
 
-    const existing = buckets.get(bucketKey) ?? { sum: 0, count: 0 };
+    const existing = buckets.get(bucketKey) ?? {
+      sum: 0,
+      count: 0,
+      validNumericCount: 0,
+    };
     existing.count += 1;
 
     if (chart.aggregation !== "count" && chart.yColumnKey) {
       const yNum = tryParseNumber(row[chart.yColumnKey]);
       if (yNum !== null) {
         existing.sum += yNum;
+        existing.validNumericCount += 1;
       }
     }
 
@@ -401,9 +498,18 @@ export function computeChartData(
     if (chart.aggregation === "sum" && chart.yColumnKey) {
       value = Number(agg.sum.toFixed(2));
     } else if (chart.aggregation === "avg" && chart.yColumnKey) {
-      value = agg.count > 0 ? Number((agg.sum / agg.count).toFixed(2)) : 0;
+      // Correctly divide by validNumericCount, NOT total row count
+      value =
+        agg.validNumericCount > 0
+          ? Number((agg.sum / agg.validNumericCount).toFixed(2))
+          : 0;
     }
-    return { name, value, count: agg.count };
+    return {
+      name,
+      value,
+      count: agg.count,
+      validNumericCount: agg.validNumericCount,
+    };
   });
 
   if (isDateAxis) {
@@ -416,17 +522,21 @@ export function computeChartData(
   if (!isDateAxis && points.length > maxItems) {
     const top = points.slice(0, maxItems - 1);
     const rest = points.slice(maxItems - 1);
-    const restSum = rest.reduce((acc, p) => acc + p.value, 0);
+    const restSum = rest.reduce((acc, p) => acc + p.value * (chart.aggregation === "avg" ? p.validNumericCount : 1), 0);
     const restCount = rest.reduce((acc, p) => acc + p.count, 0);
+    const restValidNumeric = rest.reduce((acc, p) => acc + p.validNumericCount, 0);
     points = [
       ...top,
       {
         name: "Other",
         value:
           chart.aggregation === "avg"
-            ? Number((restSum / rest.length).toFixed(2))
+            ? restValidNumeric > 0
+              ? Number((restSum / restValidNumeric).toFixed(2))
+              : 0
             : Number(restSum.toFixed(2)),
         count: restCount,
+        validNumericCount: restValidNumeric,
       },
     ];
   }

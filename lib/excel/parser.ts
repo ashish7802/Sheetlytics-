@@ -34,14 +34,26 @@ export function parseSpreadsheetBuffer(
 
   let workbook: XLSX.WorkBook;
   try {
-    workbook = XLSX.read(buffer, {
-      type: "array",
-      cellDates: true,
-      cellFormula: false,
-      cellHTML: false,
-      cellNF: false,
-      WTF: false,
-    });
+    if (fileType === "csv") {
+      const text = new TextDecoder("utf-8").decode(buffer);
+      workbook = XLSX.read(text, {
+        type: "string",
+        cellDates: true,
+        cellFormula: false,
+        cellHTML: false,
+        cellNF: false,
+        WTF: false,
+      });
+    } else {
+      workbook = XLSX.read(buffer, {
+        type: "array",
+        cellDates: true,
+        cellFormula: false,
+        cellHTML: false,
+        cellNF: false,
+        WTF: false,
+      });
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown parsing error";
     throw new Error(`Unable to read spreadsheet: ${message}`);

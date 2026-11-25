@@ -18,13 +18,7 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
-import {
-  SlidersHorizontal,
-  Trash2,
-  Plus,
-  X,
-  BarChart3,
-} from "lucide-react";
+import { SlidersHorizontal, Trash2, Plus, X, BarChart3 } from "lucide-react";
 import { computeChartData } from "@/lib/analytics/engine";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import type {
@@ -32,31 +26,40 @@ import type {
   ChartConfig,
   ChartType,
   ColumnProfile,
+  CurrencyCode,
+  CurrencyPreference,
   DataRow,
+  DateFormatPreference,
 } from "@/types/dashboard";
 
 const CHART_COLORS = [
-  "#4f46e5", // Indigo
-  "#2563eb", // Blue
-  "#7c3aed", // Violet
-  "#0ea5e9", // Sky
-  "#10b981", // Emerald
-  "#f59e0b", // Amber
-  "#ec4899", // Pink
-  "#6366f1", // Soft Indigo
+  "#4f46e5",
+  "#2563eb",
+  "#7c3aed",
+  "#0ea5e9",
+  "#10b981",
+  "#f59e0b",
+  "#ec4899",
+  "#6366f1",
 ];
 
 interface DashboardChartsProps {
   charts: ChartConfig[];
   columns: ColumnProfile[];
   filteredRows: DataRow[];
+  currencyOverride?: CurrencyPreference;
+  dateFormatPreference?: DateFormatPreference;
   onUpdateChart: (chartId: string, patch: Partial<ChartConfig>) => void;
   onRemoveChart: (chartId: string) => void;
   onAddChart: (chart: ChartConfig) => void;
 }
 
-function formatAxisValue(val: number, isCurrency: boolean): string {
-  if (isCurrency) return formatCurrency(val, Math.abs(val) >= 10000);
+function formatAxisValue(
+  val: number,
+  isCurrency: boolean,
+  currencyCode: CurrencyCode
+): string {
+  if (isCurrency) return formatCurrency(val, Math.abs(val) >= 10000, currencyCode);
   return formatNumber(val, { compact: Math.abs(val) >= 10000 });
 }
 
@@ -64,6 +67,8 @@ export function DashboardCharts({
   charts,
   columns,
   filteredRows,
+  currencyOverride = "AUTO",
+  dateFormatPreference = "auto",
   onUpdateChart,
   onRemoveChart,
   onAddChart,
@@ -75,7 +80,6 @@ export function DashboardCharts({
     (c) => c.type === "number" || c.type === "currency" || c.type === "percentage"
   );
 
-  // State for "Add Chart" dialog
   const [newTitle, setNewTitle] = useState("Custom Visualization");
   const [newType, setNewType] = useState<ChartType>("bar");
   const [newXCol, setNewXCol] = useState(columns[0]?.key ?? "");
@@ -127,7 +131,9 @@ export function DashboardCharts({
           <div className="mx-auto h-10 w-10 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center">
             <BarChart3 className="h-5 w-5" />
           </div>
-          <p className="text-sm font-medium text-slate-700">No charts configured</p>
+          <p className="text-sm font-medium text-slate-700">
+            No charts displayed—your complete data table remains available below.
+          </p>
           <button
             type="button"
             onClick={() => setIsAddOpen(true)}
@@ -140,14 +146,18 @@ export function DashboardCharts({
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {charts.map((chart) => {
-            const data = computeChartData(filteredRows, chart, columns);
+            const data = computeChartData(filteredRows, chart, columns, dateFormatPreference);
             const yCol = columns.find((c) => c.key === chart.yColumnKey);
             const isCurrency = yCol?.type === "currency" && chart.aggregation !== "count";
+            const currencyCode: CurrencyCode =
+              currencyOverride !== "AUTO" ? currencyOverride : (yCol?.currencyCode ?? "USD");
             const isEditing = editingChartId === chart.id;
 
             return (
               <div
                 key={chart.id}
+                data-chart-export="true"
+                data-chart-title={chart.title}
                 className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs flex flex-col print-break-inside-avoid"
               >
                 {/* Card Header */}
@@ -305,12 +315,14 @@ export function DashboardCharts({
                           tick={{ fontSize: 11, fill: "#64748b" }}
                           axisLine={false}
                           tickLine={false}
-                          tickFormatter={(v) => formatAxisValue(Number(v), isCurrency)}
-                          width={58}
+                          tickFormatter={(v) =>
+                            formatAxisValue(Number(v), isCurrency, currencyCode)
+                          }
+                          width={64}
                         />
                         <Tooltip
                           formatter={(val) => [
-                            formatAxisValue(Number(val ?? 0), isCurrency),
+                            formatAxisValue(Number(val ?? 0), isCurrency, currencyCode),
                             chart.aggregation === "count" ? "Records" : yCol?.label ?? "Value",
                           ]}
                           contentStyle={{
@@ -337,12 +349,14 @@ export function DashboardCharts({
                           tick={{ fontSize: 11, fill: "#64748b" }}
                           axisLine={false}
                           tickLine={false}
-                          tickFormatter={(v) => formatAxisValue(Number(v), isCurrency)}
-                          width={58}
+                          tickFormatter={(v) =>
+                            formatAxisValue(Number(v), isCurrency, currencyCode)
+                          }
+                          width={64}
                         />
                         <Tooltip
                           formatter={(val) => [
-                            formatAxisValue(Number(val ?? 0), isCurrency),
+                            formatAxisValue(Number(val ?? 0), isCurrency, currencyCode),
                             chart.aggregation === "count" ? "Records" : yCol?.label ?? "Value",
                           ]}
                           contentStyle={{
@@ -381,12 +395,14 @@ export function DashboardCharts({
                           tick={{ fontSize: 11, fill: "#64748b" }}
                           axisLine={false}
                           tickLine={false}
-                          tickFormatter={(v) => formatAxisValue(Number(v), isCurrency)}
-                          width={58}
+                          tickFormatter={(v) =>
+                            formatAxisValue(Number(v), isCurrency, currencyCode)
+                          }
+                          width={64}
                         />
                         <Tooltip
                           formatter={(val) => [
-                            formatAxisValue(Number(val ?? 0), isCurrency),
+                            formatAxisValue(Number(val ?? 0), isCurrency, currencyCode),
                             chart.aggregation === "count" ? "Records" : yCol?.label ?? "Value",
                           ]}
                           contentStyle={{
@@ -426,7 +442,7 @@ export function DashboardCharts({
                         </Pie>
                         <Tooltip
                           formatter={(val) => [
-                            formatAxisValue(Number(val ?? 0), isCurrency),
+                            formatAxisValue(Number(val ?? 0), isCurrency, currencyCode),
                             chart.aggregation === "count" ? "Records" : yCol?.label ?? "Value",
                           ]}
                           contentStyle={{

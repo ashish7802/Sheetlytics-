@@ -4,12 +4,13 @@ import React, { useState } from "react";
 import { Pencil, Check, Hash, Layers, Mail, DollarSign, TrendingUp } from "lucide-react";
 import { computeSummaryCardValue } from "@/lib/analytics/engine";
 import { cn } from "@/lib/utils";
-import type { DataRow, SummaryCardConfig } from "@/types/dashboard";
+import type { CurrencyPreference, DataRow, SummaryCardConfig } from "@/types/dashboard";
 
 interface SummaryCardsProps {
   cards: SummaryCardConfig[];
   filteredRows: DataRow[];
   totalRows: number;
+  currencyOverride?: CurrencyPreference;
   onRenameCard: (cardId: string, newTitle: string) => void;
 }
 
@@ -33,6 +34,7 @@ export function SummaryCards({
   cards,
   filteredRows,
   totalRows,
+  currencyOverride = "AUTO",
   onRenameCard,
 }: SummaryCardsProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -45,13 +47,14 @@ export function SummaryCards({
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       {cards.map((card) => {
-        const { formatted } = computeSummaryCardValue(filteredRows, card);
+        const { formatted } = computeSummaryCardValue(filteredRows, card, currencyOverride);
         const accent = ACCENT_STYLES[card.accent] ?? ACCENT_STYLES.indigo;
         const isEditing = editingId === card.id;
 
         return (
           <div
             key={card.id}
+            data-testid={`summary-card-${card.id}`}
             className="group relative rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs hover:shadow-sm transition-shadow overflow-hidden print-break-inside-avoid"
           >
             <div className={cn("absolute top-0 left-0 right-0 h-1", accent.bar)} />

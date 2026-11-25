@@ -8,7 +8,12 @@ import {
   exportFilteredExcel,
   exportOriginalFile,
 } from "@/lib/export/exporters";
-import type { ColumnProfile, DataRow, SummaryCardConfig } from "@/types/dashboard";
+import type {
+  ColumnProfile,
+  CurrencyPreference,
+  DataRow,
+  SummaryCardConfig,
+} from "@/types/dashboard";
 
 interface ExportMenuProps {
   originalFile: File | null;
@@ -17,6 +22,7 @@ interface ExportMenuProps {
   filteredRows: DataRow[];
   columns: ColumnProfile[];
   summaryCards: SummaryCardConfig[];
+  currencyOverride?: CurrencyPreference;
 }
 
 export function ExportMenu({
@@ -26,6 +32,7 @@ export function ExportMenu({
   filteredRows,
   columns,
   summaryCards,
+  currencyOverride = "AUTO",
 }: ExportMenuProps) {
   const [open, setOpen] = useState(false);
 
@@ -69,7 +76,8 @@ export function ExportMenu({
                   columns,
                   summaryCards,
                   dashboardTitle,
-                  fileName
+                  fileName,
+                  currencyOverride
                 );
                 setOpen(false);
               }}
@@ -81,15 +89,16 @@ export function ExportMenu({
 
             <button
               type="button"
-              onClick={() => {
-                exportDashboardPdf(
+              onClick={async () => {
+                setOpen(false);
+                await exportDashboardPdf(
                   filteredRows,
                   columns,
                   summaryCards,
                   dashboardTitle,
-                  fileName
+                  fileName,
+                  currencyOverride
                 );
-                setOpen(false);
               }}
               className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
             >
