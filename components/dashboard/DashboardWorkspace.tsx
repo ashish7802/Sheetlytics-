@@ -14,6 +14,7 @@ import {
   X,
   Info,
   RotateCcw,
+  Plus,
 } from "lucide-react";
 import {
   applyDashboardFilters,
@@ -21,13 +22,11 @@ import {
   generateDashboardConfig,
 } from "@/lib/analytics/engine";
 import { SummaryCards } from "@/components/dashboard/SummaryCards";
-import { DashboardCharts } from "@/components/charts/DashboardCharts";
 import { DataTable } from "@/components/data-table/DataTable";
 import { ExportMenu } from "@/components/export/ExportMenu";
 import { CategoryFilterPopover } from "@/components/dashboard/CategoryFilterPopover";
 import { cn } from "@/lib/utils";
 import type {
-  ChartConfig,
   ColumnTableFilter,
   CurrencyPreference,
   DashboardConfig,
@@ -35,6 +34,9 @@ import type {
   DashboardSectionId,
   DateFormatPreference,
   ParsedWorkbook,
+  SummaryCardAggregation,
+  SummaryCardConfig,
+  SummaryCardFormat,
 } from "@/types/dashboard";
 
 interface DashboardWorkspaceProps {
@@ -47,7 +49,6 @@ interface DashboardWorkspaceProps {
 
 const SECTION_LABELS: Record<DashboardSectionId, string> = {
   summary: "Summary Cards",
-  charts: "Visualizations",
   table: "Data Explorer Table (Mandatory)",
 };
 
@@ -89,6 +90,13 @@ export function DashboardWorkspace({
   const [draftTitle, setDraftTitle] = useState(config.title);
   const [showSchema, setShowSchema] = useState(false);
   const [showCustomize, setShowCustomize] = useState(false);
+  const [isAddCardOpen, setIsAddCardOpen] = useState(false);
+
+  // Add Summary Card modal state
+  const [newCardTitle, setNewCardTitle] = useState("Custom Metric");
+  const [newCardAgg, setNewCardAgg] = useState<SummaryCardAggregation>("sum");
+  const [newCardCol, setNewCardCol] = useState("");
+  const [newCardFormat, setNewCardFormat] = useState<SummaryCardFormat>("number");
 
   useEffect(() => {
     onConfigChange?.(config);
@@ -166,9 +174,10 @@ export function DashboardWorkspace({
 
   const moveSection = (index: number, direction: -1 | 1) => {
     const target = index + direction;
-    if (target < 0 || target >= config.sectionOrder.length) return;
+    const currentOrder = ensureTableSection(config.sectionOrder);
+    if (target < 0 || target >= currentOrder.length) return;
     setConfig((prev) => {
-      const nextOrder = [...prev.sectionOrder];
+      const nextOrder = ensureTableSection(prev.sectionOrder);
       const [item] = nextOrder.splice(index, 1);
       nextOrder.splice(target, 0, item);
       return { ...prev, sectionOrder: ensureTableSection(nextOrder) };
@@ -184,25 +193,31 @@ export function DashboardWorkspace({
     }));
   };
 
-  const handleUpdateChart = (chartId: string, patch: Partial<ChartConfig>) => {
+  const handleRemoveCard = (cardId: string) => {
     setConfig((prev) => ({
       ...prev,
-      charts: prev.charts.map((c) => (c.id === chartId ? { ...c, ...patch } : c)),
+      summaryCards: prev.summaryCards.filter((c) => c.id !== cardId),
     }));
   };
 
-  const handleRemoveChart = (chartId: string) => {
+  const handleCreateCard = (e: React.FormEvent) => {
+    e.preventDefault();
+    const selectedCol = activeSheet.columns.find((c) => c.key === newCardCol);
+    const card: SummaryCardConfig = {
+      id: `card-custom-${Date.now()}`,
+      title: newCardTitle.trim() || "Summary Metric",
+      subtitle: selectedCol ? `${newCardAgg.toUpperCase()} of ${selectedCol.label}` : "Row count",
+      columnKey: newCardAgg === "count" ? undefined : newCardCol || undefined,
+      aggregation: newCardAgg,
+      format: newCardFormat,
+      currencyCode: selectedCol?.currencyCode,
+      accent: "indigo",
+    };
     setConfig((prev) => ({
       ...prev,
-      charts: prev.charts.filter((c) => c.id !== chartId),
+      summaryCards: [...prev.summaryCards, card],
     }));
-  };
-
-  const handleAddChart = (chart: ChartConfig) => {
-    setConfig((prev) => ({
-      ...prev,
-      charts: [...prev.charts, chart],
-    }));
+    setIsAddCardOpen(false);
   };
 
   const orderedSections = ensureTableSection(config.sectionOrder);
@@ -441,11 +456,23 @@ export function DashboardWorkspace({
                   Dashboard Layout & Display Preferences
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Reorder sections, set display currency, or reset to the default layout. The Data
-                  Explorer table is always preserved.
+                  Customize summary cards, section order, table sorting, and display currency. The
+                  Data Explorer table is always preserved.
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewCardCol(activeSheet.columns[0]?.key ?? "");
+                    setNewCardTitle("Custom Metric");
+                    setIsAddCardOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700"
+                >
+                  <Plus className="h-3 w-3" />
+                  Add Summary Card
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -651,7 +678,7 @@ export function DashboardWorkspace({
           </section>
         )}
 
-        {/* Ordered Dashboard Sections (Data Table is mandatory) */}
+        {/* Ordered Chart-Free Dashboard Sections (Summary Cards + Mandatory Data Table) */}
         {orderedSections.map((sectionId) => {
           if (sectionId === "summary") {
             return (
@@ -662,23 +689,7 @@ export function DashboardWorkspace({
                   totalRows={activeSheet.rowCount}
                   currencyOverride={config.currencyOverride ?? "AUTO"}
                   onRenameCard={handleRenameCard}
-                />
-              </section>
-            );
-          }
-
-          if (sectionId === "charts") {
-            return (
-              <section key="charts">
-                <DashboardCharts
-                  charts={config.charts}
-                  columns={activeSheet.columns}
-                  filteredRows={filteredRows}
-                  currencyOverride={config.currencyOverride ?? "AUTO"}
-                  dateFormatPreference={config.dateFormatPreference ?? "auto"}
-                  onUpdateChart={handleUpdateChart}
-                  onRemoveChart={handleRemoveChart}
-                  onAddChart={handleAddChart}
+                  onRemoveCard={handleRemoveCard}
                 />
               </section>
             );
@@ -704,6 +715,102 @@ export function DashboardWorkspace({
           );
         })}
       </main>
+
+      {/* Add Summary Card Modal */}
+      {isAddCardOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 no-print">
+          <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-slate-900">Add Summary Card</h3>
+              <button
+                type="button"
+                onClick={() => setIsAddCardOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateCard} className="space-y-3.5 text-sm">
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-slate-600">Card Title</span>
+                <input
+                  type="text"
+                  value={newCardTitle}
+                  onChange={(e) => setNewCardTitle(e.target.value)}
+                  required
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900 focus:outline-none focus:border-indigo-500"
+                />
+              </label>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-slate-600">Aggregation</span>
+                  <select
+                    value={newCardAgg}
+                    onChange={(e) => setNewCardAgg(e.target.value as SummaryCardAggregation)}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="count">Total Rows</option>
+                    <option value="unique">Unique Count</option>
+                    <option value="non_empty">Populated Count</option>
+                    <option value="sum">Sum</option>
+                    <option value="avg">Average</option>
+                    <option value="min">Minimum</option>
+                    <option value="max">Maximum</option>
+                  </select>
+                </label>
+
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-slate-600">Format</span>
+                  <select
+                    value={newCardFormat}
+                    onChange={(e) => setNewCardFormat(e.target.value as SummaryCardFormat)}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="number">Number</option>
+                    <option value="currency">Currency</option>
+                    <option value="percentage">Percentage</option>
+                  </select>
+                </label>
+              </div>
+
+              {newCardAgg !== "count" && (
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-slate-600">Column</span>
+                  <select
+                    value={newCardCol}
+                    onChange={(e) => setNewCardCol(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900 focus:outline-none focus:border-indigo-500"
+                  >
+                    {activeSheet.columns.map((c) => (
+                      <option key={c.key} value={c.key}>
+                        {c.label} ({c.type})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddCardOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700"
+                >
+                  Add Card
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

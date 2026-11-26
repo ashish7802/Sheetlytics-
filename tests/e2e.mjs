@@ -7,6 +7,11 @@ import { chromium } from "playwright";
 
 const BASE_URL = "http://localhost:3000";
 
+async function assertNoChartsRendered(page) {
+  const rechartsCount = await page.locator("svg.recharts-surface, [data-chart-export]").count();
+  assert.equal(rechartsCount, 0, `Expected 0 charts in DOM, found ${rechartsCount}`);
+}
+
 async function run() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "sheetlytics-e2e-"));
 
@@ -46,18 +51,20 @@ async function run() {
     const fileInput = page.locator('input[type="file"]');
     await fileInput.setInputFiles(xlsxPath);
 
-    // Wait for mandatory data table
+    // Wait for mandatory data table & verify zero charts
     const table = page.getByTestId("mandatory-data-table");
     await table.waitFor({ state: "visible", timeout: 15000 });
+    await assertNoChartsRendered(page);
     const rowCountText = await page.getByTestId("table-row-count").textContent();
     assert.ok(rowCountText?.includes("4"), `Expected 4 rows, got: ${rowCountText}`);
-    console.log("   ✓ Dashboard & mandatory table rendered:", rowCountText?.trim());
+    console.log("   ✓ Chart-free dashboard & mandatory table rendered:", rowCountText?.trim());
 
     // Switch to TextNotes worksheet (no numeric columns!)
     console.log("3. Switching to TextNotes worksheet...");
     await page.getByLabel("Select worksheet").selectOption("TextNotes");
     await page.waitForTimeout(300);
     await table.waitFor({ state: "visible" });
+    await assertNoChartsRendered(page);
     const textSheetCount = await page.getByTestId("table-row-count").textContent();
     assert.ok(textSheetCount?.includes("2"), `Expected 2 rows in TextNotes, got: ${textSheetCount}`);
     console.log("   ✓ Text-only worksheet rendered mandatory table:", textSheetCount?.trim());
@@ -79,23 +86,15 @@ async function run() {
     await page.getByLabel("Clear search").click();
     await page.waitForTimeout(200);
 
-    // Remove all charts and verify table remains visible
-    console.log("5. Removing all charts...");
-    while ((await page.getByLabel("Remove chart").count()) > 0) {
-      await page.getByLabel("Remove chart").first().click();
-      await page.waitForTimeout(100);
-    }
-    assert.equal(await table.isVisible(), true, "Mandatory table must stay visible after removing all charts");
-    console.log("   ✓ Mandatory table remained visible with 0 charts");
-
     // Test browser-local persistence across reload
-    console.log("6. Testing refresh & local persistence...");
+    console.log("5. Testing refresh & local persistence...");
     await page.reload({ waitUntil: "networkidle" });
     await table.waitFor({ state: "visible", timeout: 10000 });
-    console.log("   ✓ Dashboard restored after page reload");
+    await assertNoChartsRendered(page);
+    console.log("   ✓ Chart-free dashboard restored after page reload");
 
-    // Test CSV & Excel exports
-    console.log("7. Testing CSV, Excel, and PDF exports...");
+    // Test CSV, Excel, and PDF exports
+    console.log("6. Testing CSV, Excel, and PDF exports...");
     await page.getByRole("button", { name: /Export/i }).click();
     const [csvDownload] = await Promise.all([
       page.waitForEvent("download"),
@@ -121,15 +120,16 @@ async function run() {
     console.log("   ✓ PDF exported:", pdfDownload.suggestedFilename());
 
     // Test uploading 1-column CSV
-    console.log("8. Testing one-column CSV upload...");
+    console.log("7. Testing one-column CSV upload...");
     await page.getByRole("button", { name: "New File" }).click();
     await page.locator('input[type="file"]').setInputFiles(csvPath);
     await table.waitFor({ state: "visible", timeout: 10000 });
+    await assertNoChartsRendered(page);
     const oneColText = await page.getByTestId("table-row-count").textContent();
     assert.ok(oneColText?.includes("3") && oneColText?.includes("1 columns"), `Expected 3 rows, 1 col, got: ${oneColText}`);
-    console.log("   ✓ One-column CSV rendered mandatory table:", oneColText?.trim());
+    console.log("   ✓ One-column CSV rendered chart-free mandatory table:", oneColText?.trim());
 
-    console.log("\nALL E2E BROWSER TESTS PASSED!");
+    console.log("\nALL CHART-FREE E2E BROWSER TESTS PASSED!");
   } finally {
     await browser.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });

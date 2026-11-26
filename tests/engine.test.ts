@@ -8,7 +8,6 @@ import { getSampleWorkbook } from "../lib/excel/samples.ts";
 import { formatCurrency } from "../lib/utils.ts";
 import {
   applyDashboardFilters,
-  computeChartData,
   computeSummaryCardValue,
   ensureTableSection,
   generateDashboardConfig,
@@ -43,13 +42,14 @@ test("CSV spreadsheet parses accurately and preserves rows", () => {
   assert.equal(formatCurrency(95000, false, "INR"), "₹95,000");
 });
 
-test("Sample datasets generate accurate summary cards (no false email verification claim)", () => {
+test("Dashboard config is strictly chart-free and generates accurate summary cards", () => {
   const prospects = getSampleWorkbook("prospects");
   const sheet = prospects.sheets["Prospects"];
   const config = generateDashboardConfig(sheet, prospects.fileName);
 
   assert.equal(sheet.rowCount, 24);
-  assert.ok(config.sectionOrder.includes("table"));
+  assert.deepEqual(config.sectionOrder, ["summary", "table"]);
+  assert.equal("charts" in config, false);
 
   const totalCard = config.summaryCards.find((c) => c.aggregation === "count")!;
   assert.equal(computeSummaryCardValue(sheet.rows, totalCard).value, 24);
@@ -59,43 +59,35 @@ test("Sample datasets generate accurate summary cards (no false email verificati
   assert.equal(computeSummaryCardValue(sheet.rows, emailCard).value, 22);
 });
 
-test("Grouped average divides by valid numeric count, NOT total row count", () => {
+test("Summary card average divides by valid numeric count, NOT total row count", () => {
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet([
     ["Category", "Score"],
     ["Alpha", 10],
     ["Alpha", 20],
-    ["Alpha", null], // missing numeric value
-    ["Alpha", ""],   // blank numeric value
-    ["Beta", 50],
+    ["Alpha", null],
+    ["Alpha", ""],
   ]);
   XLSX.utils.book_append_sheet(wb, ws, "Scores");
   const bytes = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Uint8Array;
   const parsed = parseSpreadsheetBuffer(toArrayBuffer(bytes), "scores.xlsx", bytes.byteLength, "xlsx");
   const sheet = parsed.sheets["Scores"];
 
-  const chartData = computeChartData(
-    sheet.rows,
-    {
-      id: "c1",
-      title: "Avg Score",
-      type: "bar",
-      xColumnKey: "Category",
-      yColumnKey: "Score",
-      aggregation: "avg",
-    },
-    sheet.columns
-  );
+  const avgResult = computeSummaryCardValue(sheet.rows, {
+    id: "avg-score",
+    title: "Avg Score",
+    columnKey: "Score",
+    aggregation: "avg",
+    format: "number",
+    accent: "indigo",
+  });
 
-  const alpha = chartData.find((p) => p.name === "Alpha")!;
-  assert.equal(alpha.count, 4);
-  assert.equal(alpha.validNumericCount, 2);
-  // (10 + 20) / 2 = 15 (NOT 30 / 4 = 7.5!)
-  assert.equal(alpha.value, 15);
+  assert.equal(avgResult.validCount, 2);
+  assert.equal(avgResult.missingCount, 2);
+  assert.equal(avgResult.value, 15);
 });
 
-test("Text-only, one-column, numeric-only, and date-only datasets always preserve mandatory table", () => {
-  // 1. Text-only
+test("Text-only, one-column datasets always preserve mandatory table and strip charts", () => {
   const textWb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(
     textWb,
@@ -112,7 +104,6 @@ test("Text-only, one-column, numeric-only, and date-only datasets always preserv
   assert.ok(textCfg.sectionOrder.includes("table"));
   assert.equal(textParsed.sheets["Notes"].rowCount, 2);
 
-  // 2. One-column
   const oneColWb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(
     oneColWb,
@@ -126,15 +117,15 @@ test("Text-only, one-column, numeric-only, and date-only datasets always preserv
   assert.equal(oneParsed.sheets["Single"].columnCount, 1);
   assert.equal(oneParsed.sheets["Single"].rowCount, 3);
 
-  // 3. ensureTableSection invariant even if caller tries to omit table
-  assert.ok(ensureTableSection(["summary", "charts"]).includes("table"));
+  const sanitized = ensureTableSection(["summary", "charts"]);
+  assert.deepEqual(sanitized, ["summary", "table"]);
 });
 
 test("Deterministic date parsing handles ISO, Excel serials, and MDY/DMY ambiguity", () => {
   assert.equal(tryParseDateIso("2026-03-15"), "2026-03-15");
-  assert.equal(tryParseDateIso("15/03/2026"), "2026-03-15"); // Unambiguous DMY
-  assert.equal(tryParseDateIso("03/15/2026"), "2026-03-15"); // Unambiguous MDY
-  assert.equal(tryParseDateIso(46023, "auto", true), "2026-01-01"); // Excel serial
+  assert.equal(tryParseDateIso("15/03/2026"), "2026-03-15");
+  assert.equal(tryParseDateIso("03/15/2026"), "2026-03-15");
+  assert.equal(tryParseDateIso(46023, "auto", true), "2026-01-01");
   assert.equal(tryParseDateIso("invalid-date"), null);
 
   const ambigMdy = parseDateDeterministic("01/02/2026", "MDY");
@@ -151,7 +142,7 @@ test("Category filters expose all >12 categories and support blank-value and tab
   for (let i = 1; i <= 20; i++) {
     rows.push([`Cat-${String(i).padStart(2, "0")}`, i * 100]);
   }
-  rows.push([null, 50]); // Blank category
+  rows.push([null, 50]);
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "Data");
@@ -159,11 +150,9 @@ test("Category filters expose all >12 categories and support blank-value and tab
   const parsed = parseSpreadsheetBuffer(toArrayBuffer(bytes), "cats.xlsx", bytes.byteLength, "xlsx");
   const sheet = parsed.sheets["Data"];
 
-  // All 20 categories must be in uniqueValues (not capped at 12!)
   assert.equal(sheet.columns[0].uniqueValues.length, 20);
   assert.ok(sheet.columns[0].uniqueValues.includes("Cat-20"));
 
-  // Blank filter
   const blankOnly = applyDashboardFilters(sheet, {
     search: "",
     columnFilters: { Category: ["(Blank)"] },
@@ -171,7 +160,6 @@ test("Category filters expose all >12 categories and support blank-value and tab
   assert.equal(blankOnly.length, 1);
   assert.equal(blankOnly[0]["Amount"], 50);
 
-  // Numeric range table filter
   const rangeFiltered = applyDashboardFilters(sheet, {
     search: "",
     columnFilters: {},
@@ -179,7 +167,7 @@ test("Category filters expose all >12 categories and support blank-value and tab
       Amount: { mode: "range", min: "1800", max: "2000" },
     },
   });
-  assert.equal(rangeFiltered.length, 3); // 1800, 1900, 2000
+  assert.equal(rangeFiltered.length, 3);
 });
 
 test("Multi-worksheet Excel file with duplicate headers, blank headers, and empty sheets parses safely", () => {
@@ -203,7 +191,7 @@ test("Multi-worksheet Excel file with duplicate headers, blank headers, and empt
   assert.ok(parsed.warnings.some((w) => w.includes("duplicate column names")));
 });
 
-test("Large datasets (5k, 10k, 50k rows) parse and compute analytics within budget", () => {
+test("Large datasets (5k, 10k, 50k rows) parse and compute summary cards within budget", () => {
   for (const size of [5000, 10000, 50000]) {
     const rows: Array<Array<string | number>> = [["ID", "Category", "Amount", "Date"]];
     for (let i = 1; i <= size; i++) {
@@ -221,15 +209,11 @@ test("Large datasets (5k, 10k, 50k rows) parse and compute analytics within budg
     const start = Date.now();
     const parsed = parseSpreadsheetBuffer(toArrayBuffer(bytes), `large-${size}.xlsx`, bytes.byteLength, "xlsx");
     const config = generateDashboardConfig(parsed.sheets["Large"], `large-${size}.xlsx`);
-    const chartPoints = computeChartData(
-      parsed.sheets["Large"].rows,
-      config.charts[0],
-      parsed.sheets["Large"].columns
-    );
+    const totalRes = computeSummaryCardValue(parsed.sheets["Large"].rows, config.summaryCards[0]);
     const elapsed = Date.now() - start;
 
     assert.equal(parsed.sheets["Large"].rowCount, size);
-    assert.ok(chartPoints.length > 0);
+    assert.equal(totalRes.value, size);
     assert.ok(elapsed < 15000, `Dataset ${size} took ${elapsed}ms`);
   }
 });

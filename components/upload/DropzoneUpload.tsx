@@ -7,7 +7,7 @@ import {
   AlertCircle,
   Loader2,
   ShieldCheck,
-  BarChart3,
+  Calculator,
   Table2,
   Download,
   Sparkles,
@@ -116,8 +116,8 @@ export function DropzoneUpload({
             Turn any Excel or CSV file into an interactive dashboard
           </h1>
           <p className="text-base sm:text-lg text-slate-600 leading-relaxed">
-            Upload your spreadsheet and instantly get summary metrics, interactive charts, and a
-            searchable data table—powered by deterministic data profiling with zero setup.
+            Upload your spreadsheet and instantly get deterministic summary cards and a
+            searchable, filterable data table—100% private and chart-free with zero setup.
           </p>
         </section>
 
@@ -330,22 +330,22 @@ export function DropzoneUpload({
             </div>
             <div className="rounded-2xl bg-white border border-slate-200/80 p-5 space-y-2">
               <div className="h-9 w-9 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                <BarChart3 className="h-5 w-5" />
+                <Calculator className="h-5 w-5" />
               </div>
-              <h3 className="font-semibold text-slate-900 text-sm">2. Deterministic Charts</h3>
+              <h3 className="font-semibold text-slate-900 text-sm">2. Deterministic Summary Cards</h3>
               <p className="text-sm text-slate-500">
-                Builds accurate KPI cards and interactive Recharts visualizations tailored to your
-                columns—with full manual customization.
+                Builds accurate KPI cards for totals, averages, unique counts, and populated fields
+                tailored to your columns—with full customization.
               </p>
             </div>
             <div className="rounded-2xl bg-white border border-slate-200/80 p-5 space-y-2">
               <div className="h-9 w-9 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center">
                 <Download className="h-5 w-5" />
               </div>
-              <h3 className="font-semibold text-slate-900 text-sm">3. Filter & Export</h3>
+              <h3 className="font-semibold text-slate-900 text-sm">3. Explore, Filter & Export</h3>
               <p className="text-sm text-slate-500">
-                Search, sort, and filter live across charts and tables, then export filtered results
-                to CSV, Excel, or PDF.
+                Search, sort, and filter live across the complete data table, then export filtered
+                results to CSV, Excel, or PDF.
               </p>
             </div>
           </div>

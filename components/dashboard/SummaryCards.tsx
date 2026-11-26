@@ -1,7 +1,16 @@
 "use client";
 
 import React, { useState } from "react";
-import { Pencil, Check, Hash, Layers, Mail, DollarSign, TrendingUp } from "lucide-react";
+import {
+  Pencil,
+  Check,
+  Hash,
+  Layers,
+  Mail,
+  DollarSign,
+  TrendingUp,
+  Trash2,
+} from "lucide-react";
 import { computeSummaryCardValue } from "@/lib/analytics/engine";
 import { cn } from "@/lib/utils";
 import type { CurrencyPreference, DataRow, SummaryCardConfig } from "@/types/dashboard";
@@ -12,6 +21,7 @@ interface SummaryCardsProps {
   totalRows: number;
   currencyOverride?: CurrencyPreference;
   onRenameCard: (cardId: string, newTitle: string) => void;
+  onRemoveCard?: (cardId: string) => void;
 }
 
 const ACCENT_STYLES: Record<SummaryCardConfig["accent"], { bar: string; iconBg: string }> = {
@@ -26,7 +36,9 @@ function CardIcon({ card }: { card: SummaryCardConfig }) {
   if (card.format === "currency") return <DollarSign className="h-4 w-4" />;
   if (card.aggregation === "unique") return <Layers className="h-4 w-4" />;
   if (card.aggregation === "non_empty") return <Mail className="h-4 w-4" />;
-  if (card.aggregation === "avg") return <TrendingUp className="h-4 w-4" />;
+  if (card.aggregation === "avg" || card.aggregation === "min" || card.aggregation === "max") {
+    return <TrendingUp className="h-4 w-4" />;
+  }
   return <Hash className="h-4 w-4" />;
 }
 
@@ -36,6 +48,7 @@ export function SummaryCards({
   totalRows,
   currencyOverride = "AUTO",
   onRenameCard,
+  onRemoveCard,
 }: SummaryCardsProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
@@ -88,7 +101,7 @@ export function SummaryCards({
                     </button>
                   </form>
                 ) : (
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1">
                     <p className="text-xs font-medium uppercase tracking-wider text-slate-500 truncate">
                       {card.title}
                     </p>
@@ -103,6 +116,16 @@ export function SummaryCards({
                     >
                       <Pencil className="h-3 w-3" />
                     </button>
+                    {onRemoveCard && (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveCard(card.id)}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-red-600 transition-opacity no-print"
+                        aria-label={`Remove ${card.title}`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

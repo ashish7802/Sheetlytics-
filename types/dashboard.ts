@@ -103,22 +103,7 @@ export interface SummaryCardConfig {
   accent: "indigo" | "blue" | "violet" | "emerald" | "amber";
 }
 
-export type ChartType = "bar" | "line" | "area" | "pie" | "doughnut";
-export type ChartAggregation = "count" | "sum" | "avg";
-
-export interface ChartConfig {
-  id: string;
-  title: string;
-  subtitle?: string;
-  type: ChartType;
-  xColumnKey: string;
-  yColumnKey?: string;
-  aggregation: ChartAggregation;
-  maxItems?: number;
-  dateGranularity?: "day" | "month" | "year";
-}
-
-export type DashboardSectionId = "summary" | "charts" | "table";
+export type DashboardSectionId = "summary" | "table";
 
 export interface ColumnTableFilter {
   mode: "contains" | "range" | "blank_only" | "non_blank";
@@ -143,7 +128,6 @@ export interface DashboardConfig {
   activeSheetName: string;
   sectionOrder: DashboardSectionId[];
   summaryCards: SummaryCardConfig[];
-  charts: ChartConfig[];
   currencyOverride?: CurrencyPreference;
   dateFormatPreference?: DateFormatPreference;
   defaultSort?: {

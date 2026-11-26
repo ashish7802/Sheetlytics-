@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SheetPulse — Instant Excel & CSV to Interactive Dashboard",
+  title: "Sheetlytics — Chart-Free Excel & CSV to Dashboard",
   description:
-    "Transform Excel (.xlsx, .xls) and CSV spreadsheets into clean, interactive, data-driven dashboards directly in your browser. Zero AI, 100% deterministic and private.",
+    "Transform Excel (.xlsx, .xls) and CSV spreadsheets into clean, chart-free dashboards with deterministic summary cards and a complete interactive data table. 100% client-side and private.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

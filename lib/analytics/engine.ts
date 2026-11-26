@@ -1,8 +1,6 @@
 import { tryParseDateIso, tryParseNumber } from "../excel/profiler.ts";
 import { formatCurrency, formatNumber, formatPercentage } from "../utils.ts";
 import type {
-  ChartConfig,
-  ColumnProfile,
   CurrencyPreference,
   DashboardConfig,
   DashboardFilterState,
@@ -29,10 +27,14 @@ function formatTitleFromFileName(fileName: string): string {
 }
 
 /**
- * Guarantees that the mandatory Data Table section is always present in sectionOrder.
+ * Guarantees that the mandatory Data Table section is always present in sectionOrder
+ * and only valid chart-free sections ("summary" | "table") remain.
  */
-export function ensureTableSection(order: DashboardSectionId[]): DashboardSectionId[] {
-  const unique = Array.from(new Set(order));
+export function ensureTableSection(order: string[]): DashboardSectionId[] {
+  const valid = order.filter(
+    (id): id is DashboardSectionId => id === "summary" || id === "table"
+  );
+  const unique = Array.from(new Set(valid));
   if (!unique.includes("table")) {
     unique.push("table");
   }
@@ -40,7 +42,7 @@ export function ensureTableSection(order: DashboardSectionId[]): DashboardSectio
 }
 
 /**
- * Deterministically generates summary cards, charts, and default layout
+ * Deterministically generates summary cards and default chart-free layout
  * from a profiled spreadsheet without any AI.
  */
 export function generateDashboardConfig(
@@ -49,7 +51,6 @@ export function generateDashboardConfig(
 ): DashboardConfig {
   const cols = sheet.columns;
   const summaryCards: SummaryCardConfig[] = [];
-  const charts: ChartConfig[] = [];
 
   // 1. Primary Total Records card
   summaryCards.push({
@@ -61,7 +62,7 @@ export function generateDashboardConfig(
     accent: "indigo",
   });
 
-  // 2. Look for company / entity / location unique count
+  // 2. Look for company / entity / category unique count
   const entityCol =
     cols.find((c) => c.role === "company" && c.uniqueCount > 1) ??
     cols.find((c) => c.role === "category" && c.uniqueCount > 1 && c.uniqueCount < sheet.rowCount);
@@ -118,7 +119,7 @@ export function generateDashboardConfig(
     });
   }
 
-  // Fill up to 4 cards if needed using status
+  // Fill up to 4 cards if needed using status groups
   if (summaryCards.length < 4) {
     const statusCol = cols.find((c) => c.role === "status" || c.type === "status");
     if (statusCol) {
@@ -134,123 +135,11 @@ export function generateDashboardConfig(
     }
   }
 
-  // --- Chart Generation Rules ---
-  const dateCol = cols.find((c) => c.type === "date" && c.nonNullCount >= 2);
-  const primaryMetric = numericCols.find((c) => c.type === "currency") ?? numericCols[0];
-  const secondaryMetric = numericCols.length > 1 ? numericCols[1] : undefined;
-
-  const categoricalCols = cols.filter(
-    (c) =>
-      (c.type === "category" || c.type === "status" || c.role === "location" || c.role === "category") &&
-      c.uniqueCount >= 2 &&
-      c.uniqueCount <= 50 &&
-      c.role !== "id" &&
-      c.role !== "email"
-  );
-
-  // Rule 1: Date + Numeric -> Area/Line Trend Chart
-  if (dateCol && primaryMetric) {
-    charts.push({
-      id: `chart-trend-${dateCol.key}`,
-      title: `${primaryMetric.label} Over Time`,
-      subtitle: `Grouped by ${dateCol.label}`,
-      type: "area",
-      xColumnKey: dateCol.key,
-      yColumnKey: primaryMetric.key,
-      aggregation: "sum",
-      dateGranularity: "month",
-      maxItems: 24,
-    });
-  } else if (dateCol) {
-    charts.push({
-      id: `chart-trend-count-${dateCol.key}`,
-      title: `Records Over Time`,
-      subtitle: `Count by ${dateCol.label}`,
-      type: "line",
-      xColumnKey: dateCol.key,
-      aggregation: "count",
-      dateGranularity: "month",
-      maxItems: 24,
-    });
-  }
-
-  // Rule 2: Status distribution -> Doughnut Chart
-  const statusCol = categoricalCols.find((c) => c.role === "status" || c.type === "status");
-  if (statusCol) {
-    charts.push({
-      id: `chart-status-${statusCol.key}`,
-      title: `${statusCol.label} Distribution`,
-      subtitle: "Breakdown by count",
-      type: "doughnut",
-      xColumnKey: statusCol.key,
-      aggregation: "count",
-      maxItems: 8,
-    });
-  }
-
-  // Rule 3: Category / Location + Primary Metric -> Bar Chart
-  const mainCategory = categoricalCols.find((c) => c.key !== statusCol?.key) ?? categoricalCols[0];
-  if (mainCategory && primaryMetric) {
-    charts.push({
-      id: `chart-cat-metric-${mainCategory.key}`,
-      title: `${primaryMetric.label} by ${mainCategory.label}`,
-      subtitle: `Total ${primaryMetric.label}`,
-      type: "bar",
-      xColumnKey: mainCategory.key,
-      yColumnKey: primaryMetric.key,
-      aggregation: "sum",
-      maxItems: 10,
-    });
-  } else if (mainCategory) {
-    charts.push({
-      id: `chart-cat-count-${mainCategory.key}`,
-      title: `Count by ${mainCategory.label}`,
-      subtitle: "Top categories",
-      type: "bar",
-      xColumnKey: mainCategory.key,
-      aggregation: "count",
-      maxItems: 10,
-    });
-  }
-
-  // Rule 4: Additional categorical comparison if space (< 4 charts)
-  const extraCat = categoricalCols.find(
-    (c) => c.key !== statusCol?.key && c.key !== mainCategory?.key
-  );
-  if (extraCat && charts.length < 4) {
-    charts.push({
-      id: `chart-extra-${extraCat.key}`,
-      title: secondaryMetric
-        ? `${secondaryMetric.label} by ${extraCat.label}`
-        : `${extraCat.label} Breakdown`,
-      subtitle: secondaryMetric ? `Sum of ${secondaryMetric.label}` : "Record count",
-      type: "bar",
-      xColumnKey: extraCat.key,
-      yColumnKey: secondaryMetric?.key,
-      aggregation: secondaryMetric ? "sum" : "count",
-      maxItems: 10,
-    });
-  }
-
-  // Fallback: if no date or category columns exist, create a chart only if numeric metric exists
-  if (charts.length === 0 && primaryMetric) {
-    charts.push({
-      id: `chart-dist-${primaryMetric.key}`,
-      title: `${primaryMetric.label} Overview`,
-      subtitle: "Distribution across values",
-      type: "bar",
-      xColumnKey: primaryMetric.key,
-      aggregation: "count",
-      maxItems: 10,
-    });
-  }
-
   return {
     title: formatTitleFromFileName(fileName),
     activeSheetName: sheet.name,
-    sectionOrder: ["summary", "charts", "table"],
+    sectionOrder: ["summary", "table"],
     summaryCards,
-    charts,
     currencyOverride: "AUTO",
     dateFormatPreference: "auto",
   };
@@ -426,120 +315,4 @@ export function computeSummaryCardValue(
   }
 
   return { value, formatted, validCount, missingCount };
-}
-
-export interface ChartDataPoint {
-  name: string;
-  value: number;
-  count: number;
-  validNumericCount: number;
-}
-
-export function computeChartData(
-  rows: DataRow[],
-  chart: ChartConfig,
-  columns: ColumnProfile[],
-  datePreference: DateFormatPreference = "auto"
-): ChartDataPoint[] {
-  const xCol = columns.find((c) => c.key === chart.xColumnKey);
-  if (!xCol) return [];
-
-  const buckets = new Map<
-    string,
-    { sum: number; count: number; validNumericCount: number }
-  >();
-
-  const isDateAxis = xCol.type === "date";
-  const allowSerial = /\b(date|created|updated|joined|dob|timestamp)\b/.test(
-    xCol.label.toLowerCase()
-  );
-  const granularity = chart.dateGranularity ?? "month";
-
-  for (const row of rows) {
-    const rawX = row[chart.xColumnKey];
-    let bucketKey = "(Blank)";
-
-    if (rawX !== null && rawX !== undefined && String(rawX).trim() !== "") {
-      if (isDateAxis) {
-        const iso = tryParseDateIso(rawX, datePreference, allowSerial);
-        if (!iso) continue;
-        if (granularity === "year") {
-          bucketKey = iso.slice(0, 4);
-        } else if (granularity === "month") {
-          bucketKey = iso.slice(0, 7);
-        } else {
-          bucketKey = iso;
-        }
-      } else {
-        bucketKey = String(rawX).trim();
-      }
-    }
-
-    const existing = buckets.get(bucketKey) ?? {
-      sum: 0,
-      count: 0,
-      validNumericCount: 0,
-    };
-    existing.count += 1;
-
-    if (chart.aggregation !== "count" && chart.yColumnKey) {
-      const yNum = tryParseNumber(row[chart.yColumnKey]);
-      if (yNum !== null) {
-        existing.sum += yNum;
-        existing.validNumericCount += 1;
-      }
-    }
-
-    buckets.set(bucketKey, existing);
-  }
-
-  let points: ChartDataPoint[] = Array.from(buckets.entries()).map(([name, agg]) => {
-    let value = agg.count;
-    if (chart.aggregation === "sum" && chart.yColumnKey) {
-      value = Number(agg.sum.toFixed(2));
-    } else if (chart.aggregation === "avg" && chart.yColumnKey) {
-      // Correctly divide by validNumericCount, NOT total row count
-      value =
-        agg.validNumericCount > 0
-          ? Number((agg.sum / agg.validNumericCount).toFixed(2))
-          : 0;
-    }
-    return {
-      name,
-      value,
-      count: agg.count,
-      validNumericCount: agg.validNumericCount,
-    };
-  });
-
-  if (isDateAxis) {
-    points.sort((a, b) => a.name.localeCompare(b.name));
-  } else {
-    points.sort((a, b) => b.value - a.value);
-  }
-
-  const maxItems = chart.maxItems ?? 10;
-  if (!isDateAxis && points.length > maxItems) {
-    const top = points.slice(0, maxItems - 1);
-    const rest = points.slice(maxItems - 1);
-    const restSum = rest.reduce((acc, p) => acc + p.value * (chart.aggregation === "avg" ? p.validNumericCount : 1), 0);
-    const restCount = rest.reduce((acc, p) => acc + p.count, 0);
-    const restValidNumeric = rest.reduce((acc, p) => acc + p.validNumericCount, 0);
-    points = [
-      ...top,
-      {
-        name: "Other",
-        value:
-          chart.aggregation === "avg"
-            ? restValidNumeric > 0
-              ? Number((restSum / restValidNumeric).toFixed(2))
-              : 0
-            : Number(restSum.toFixed(2)),
-        count: restCount,
-        validNumericCount: restValidNumeric,
-      },
-    ];
-  }
-
-  return points;
 }
