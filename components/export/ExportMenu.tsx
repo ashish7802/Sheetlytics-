@@ -1,8 +1,18 @@
 "use client";
 
 import React, { useState } from "react";
-import { Download, FileSpreadsheet, FileText, Printer, FileDown, ChevronDown } from "lucide-react";
 import {
+  Download,
+  FileSpreadsheet,
+  FileText,
+  Printer,
+  FileDown,
+  ChevronDown,
+  Copy,
+  Check,
+} from "lucide-react";
+import {
+  copyFilteredTsv,
   exportDashboardPdf,
   exportFilteredCsv,
   exportFilteredExcel,
@@ -35,6 +45,7 @@ export function ExportMenu({
   currencyOverride = "AUTO",
 }: ExportMenuProps) {
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   return (
     <div className="relative no-print">
@@ -66,6 +77,26 @@ export function ExportMenu({
             >
               <FileDown className="h-4 w-4 text-slate-400" />
               Export Filtered CSV
+            </button>
+
+            <button
+              type="button"
+              onClick={async () => {
+                const ok = await copyFilteredTsv(filteredRows, columns);
+                if (ok) {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                }
+                setOpen(false);
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
+            >
+              {copied ? (
+                <Check className="h-4 w-4 text-emerald-600" />
+              ) : (
+                <Copy className="h-4 w-4 text-slate-400" />
+              )}
+              Copy Filtered Table (TSV)
             </button>
 
             <button

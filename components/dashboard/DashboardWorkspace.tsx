@@ -25,6 +25,7 @@ import { SummaryCards } from "@/components/dashboard/SummaryCards";
 import { DataTable } from "@/components/data-table/DataTable";
 import { ExportMenu } from "@/components/export/ExportMenu";
 import { CategoryFilterPopover } from "@/components/dashboard/CategoryFilterPopover";
+import { ColumnInsightsPanel } from "@/components/dashboard/ColumnInsightsPanel";
 import { cn } from "@/lib/utils";
 import type {
   ColumnTableFilter,
@@ -50,18 +51,6 @@ interface DashboardWorkspaceProps {
 const SECTION_LABELS: Record<DashboardSectionId, string> = {
   summary: "Summary Cards",
   table: "Data Explorer Table (Mandatory)",
-};
-
-const TYPE_BADGE_COLORS: Record<string, string> = {
-  number: "bg-blue-50 text-blue-700 border-blue-200",
-  currency: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  percentage: "bg-violet-50 text-violet-700 border-violet-200",
-  date: "bg-amber-50 text-amber-700 border-amber-200",
-  email: "bg-indigo-50 text-indigo-700 border-indigo-200",
-  status: "bg-pink-50 text-pink-700 border-pink-200",
-  category: "bg-sky-50 text-sky-700 border-sky-200",
-  boolean: "bg-slate-100 text-slate-700 border-slate-200",
-  text: "bg-slate-100 text-slate-600 border-slate-200",
 };
 
 export function DashboardWorkspace({
@@ -397,54 +386,15 @@ export function DashboardWorkspace({
           </div>
         )}
 
-        {/* Detected Columns & Data Types Panel */}
+        {/* Column Insights & Data Quality Panel */}
         {showSchema && (
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-3 no-print">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-900">
-                  Detected Column Schema ({activeSheet.columns.length})
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Types, currency codes, and missing values detected deterministically.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowSchema(false)}
-                className="p-1 text-slate-400 hover:text-slate-600"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
-              {activeSheet.columns.map((col) => (
-                <div
-                  key={col.key}
-                  className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3 text-xs space-y-1.5"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-slate-800 truncate" title={col.label}>
-                      {col.label}
-                    </span>
-                    <span
-                      className={cn(
-                        "px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase border shrink-0",
-                        TYPE_BADGE_COLORS[col.type] ?? TYPE_BADGE_COLORS.text
-                      )}
-                    >
-                      {col.type}
-                      {col.currencyCode ? ` (${col.currencyCode})` : ""}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-[11px] text-slate-500">
-                    <span>{col.uniqueCount.toLocaleString()} unique</span>
-                    <span>{col.missingCount} blank</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+          <ColumnInsightsPanel
+            columns={activeSheet.columns}
+            filteredRows={filteredRows}
+            currencyOverride={config.currencyOverride ?? "AUTO"}
+            dateFormatPreference={config.dateFormatPreference ?? "auto"}
+            onClose={() => setShowSchema(false)}
+          />
         )}
 
         {/* Layout & Display Customization Panel */}

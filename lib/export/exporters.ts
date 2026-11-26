@@ -49,6 +49,25 @@ export function exportFilteredCsv(
   triggerDownload(blob, `${cleanName}-filtered.csv`);
 }
 
+export async function copyFilteredTsv(
+  rows: DataRow[],
+  columns: ColumnProfile[]
+): Promise<boolean> {
+  const escapeTsv = (v: unknown) => {
+    if (v === null || v === undefined) return "";
+    return String(v).replace(/[\t\r\n]+/g, " ");
+  };
+  const headerLine = columns.map((c) => escapeTsv(c.label)).join("\t");
+  const dataLines = rows.map((r) => columns.map((c) => escapeTsv(r[c.key])).join("\t"));
+  const tsv = [headerLine, ...dataLines].join("\n");
+  try {
+    await navigator.clipboard.writeText(tsv);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function exportFilteredExcel(
   rows: DataRow[],
   columns: ColumnProfile[],

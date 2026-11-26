@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -22,6 +22,10 @@ import {
   Search,
   SlidersHorizontal,
   X,
+  Rows3,
+  WrapText,
+  Copy,
+  Check,
 } from "lucide-react";
 import { cn, formatCurrency, formatNumber } from "@/lib/utils";
 import { tryParseNumber } from "@/lib/excel/profiler";
@@ -76,12 +80,17 @@ export function DataTable({
   onClearAllFilters,
   hasActiveFilters,
 }: DataTableProps) {
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [sorting, setSorting] = useState<SortingState>(
     defaultSort ? [{ id: defaultSort.columnKey, desc: defaultSort.desc }] : []
   );
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [isColMenuOpen, setIsColMenuOpen] = useState(false);
   const [showColumnFilterRow, setShowColumnFilterRow] = useState(false);
+  const [compactMode, setCompactMode] = useState(false);
+  const [wrapText, setWrapText] = useState(false);
+  const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
+  const [copiedRow, setCopiedRow] = useState(false);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 15,
@@ -90,7 +99,25 @@ export function DataTable({
   // Reset pagination to page 0 whenever filtered rows or search change
   useEffect(() => {
     setPagination((prev) => (prev.pageIndex === 0 ? prev : { ...prev, pageIndex: 0 }));
+    setSelectedRowIndex(null);
   }, [rows.length, searchQuery]);
+
+  // Press "/" to focus search input quickly
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.key === "/" &&
+        document.activeElement?.tagName !== "INPUT" &&
+        document.activeElement?.tagName !== "TEXTAREA" &&
+        document.activeElement?.tagName !== "SELECT"
+      ) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const tableColumns = useMemo<ColumnDef<DataRow>[]>(
     () =>
@@ -188,6 +215,24 @@ export function DataTable({
   });
 
   const activeTableFilterCount = Object.keys(tableColumnFilters).length;
+  const visibleRows = table.getRowModel().rows;
+  const inspectedRow =
+    selectedRowIndex !== null ? visibleRows[selectedRowIndex]?.original ?? null : null;
+
+  const handleCopyInspectedRow = async () => {
+    if (!inspectedRow) return;
+    const obj: Record<string, unknown> = {};
+    for (const col of columns) {
+      obj[col.label] = inspectedRow[col.key];
+    }
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
+      setCopiedRow(true);
+      setTimeout(() => setCopiedRow(false), 1500);
+    } catch {
+      // Ignore clipboard permission errors
+    }
+  };
 
   return (
     <div
@@ -203,6 +248,7 @@ export function DataTable({
             <span className="font-semibold text-slate-700">{rows.length.toLocaleString()}</span>{" "}
             {rows.length !== totalRows && <>of {totalRows.toLocaleString()} total </>}
             records • {columns.length} columns
+            <span className="hidden md:inline text-slate-400"> • Click any row to inspect</span>
           </p>
         </div>
 
@@ -211,10 +257,11 @@ export function DataTable({
           <div className="relative flex-1 sm:w-64">
             <Search className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
+              ref={searchInputRef}
               type="text"
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search all columns..."
+              placeholder="Search all columns... ( / )"
               aria-label="Search all columns"
               className="w-full rounded-xl border border-slate-200 bg-slate-50/70 pl-8 pr-8 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:border-indigo-400"
             />
@@ -247,6 +294,35 @@ export function DataTable({
                 {activeTableFilterCount}
               </span>
             )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setCompactMode((prev) => !prev)}
+            title="Toggle row density"
+            className={cn(
+              "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-colors",
+              compactMode
+                ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+            )}
+          >
+            <Rows3 className="h-3.5 w-3.5" />
+            <span className="hidden md:inline">{compactMode ? "Compact" : "Standard"}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setWrapText((prev) => !prev)}
+            title="Toggle text wrapping"
+            className={cn(
+              "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-colors",
+              wrapText
+                ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+            )}
+          >
+            <WrapText className="h-3.5 w-3.5" />
           </button>
 
           {hasActiveFilters && (
@@ -299,7 +375,7 @@ export function DataTable({
       </div>
 
       {/* Scrollable Table */}
-      <div className="overflow-x-auto max-h-[540px]">
+      <div className="overflow-x-auto max-h-[580px]">
         <table
           className="w-full border-collapse text-left"
           style={{ minWidth: table.getCenterTotalSize() }}
@@ -455,7 +531,7 @@ export function DataTable({
           </thead>
 
           <tbody className="divide-y divide-slate-100">
-            {table.getRowModel().rows.length === 0 ? (
+            {visibleRows.length === 0 ? (
               <tr>
                 <td
                   colSpan={table.getVisibleLeafColumns().length || 1}
@@ -465,13 +541,26 @@ export function DataTable({
                 </td>
               </tr>
             ) : (
-              table.getRowModel().rows.map((row) => (
-                <tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
+              visibleRows.map((row, idx) => (
+                <tr
+                  key={row.id}
+                  onClick={() => setSelectedRowIndex(idx)}
+                  className={cn(
+                    "cursor-pointer transition-colors",
+                    selectedRowIndex === idx
+                      ? "bg-indigo-50/70"
+                      : "hover:bg-slate-50/80"
+                  )}
+                >
                   {row.getVisibleCells().map((cell) => (
                     <td
                       key={cell.id}
                       style={{ width: cell.column.getSize() }}
-                      className="px-4 py-3 whitespace-nowrap max-w-xs truncate"
+                      className={cn(
+                        "px-4 max-w-xs",
+                        compactMode ? "py-1.5" : "py-3",
+                        wrapText ? "whitespace-normal break-words" : "whitespace-nowrap truncate"
+                      )}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
@@ -530,6 +619,85 @@ export function DataTable({
           </div>
         </div>
       </div>
+
+      {/* Row Detail Inspector Modal */}
+      {inspectedRow && selectedRowIndex !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 no-print">
+          <div className="w-full max-w-lg rounded-2xl bg-white border border-slate-200 shadow-xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">Record Details</h3>
+                <p className="text-xs text-slate-500">
+                  Row {selectedRowIndex + 1} of {visibleRows.length} on current page
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleCopyInspectedRow}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  {copiedRow ? (
+                    <>
+                      <Check className="h-3.5 w-3.5 text-emerald-600" />
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3.5 w-3.5" />
+                      Copy JSON
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedRowIndex(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+                  aria-label="Close record details"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-5 overflow-y-auto divide-y divide-slate-100">
+              {columns.map((col) => {
+                const val = inspectedRow[col.key];
+                const isEmpty = val === null || val === undefined || String(val).trim() === "";
+                return (
+                  <div key={col.key} className="py-2.5 flex flex-col sm:flex-row sm:justify-between gap-1 text-xs">
+                    <span className="font-medium text-slate-500 sm:w-40 shrink-0">
+                      {col.label}
+                    </span>
+                    <span className={cn("text-slate-900 break-words sm:text-right", isEmpty && "italic text-slate-300")}>
+                      {isEmpty ? "(Blank)" : String(val)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs">
+              <button
+                type="button"
+                disabled={selectedRowIndex <= 0}
+                onClick={() => setSelectedRowIndex((i) => (i !== null ? i - 1 : null))}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+              >
+                ← Previous
+              </button>
+              <button
+                type="button"
+                disabled={selectedRowIndex >= visibleRows.length - 1}
+                onClick={() => setSelectedRowIndex((i) => (i !== null ? i + 1 : null))}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+              >
+                Next →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
